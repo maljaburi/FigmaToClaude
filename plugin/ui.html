@@ -56,6 +56,21 @@
   #result.ok { display: block; background: var(--figma-color-bg-success-tertiary); }
   #result.bad { display: block; background: var(--figma-color-bg-danger-tertiary); }
   #paste-field { display: none; }
+
+  #install-help {
+    display: none; margin-top: 12px; padding: 10px; border-radius: 5px;
+    font-size: 10px; line-height: 1.5;
+    background: var(--figma-color-bg-warning-tertiary);
+  }
+  #install-help b { display: block; margin-bottom: 4px; }
+  #install-help code {
+    display: block; margin: 8px 0; padding: 7px; border-radius: 4px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 9px; line-height: 1.4;
+    word-break: break-all; user-select: all;
+    background: var(--figma-color-bg); color: var(--figma-color-text);
+  }
+  /* Offscreen, but must stay focusable for execCommand("copy") to work. */
+  #clipboard { position: absolute; left: -9999px; top: 0; opacity: 0; }
 </style>
 </head>
 <body>
@@ -90,7 +105,16 @@
   </div>
   <button class="ghost" id="connect" style="display:none">Connect Figma MCP</button>
 
+  <div id="install-help">
+    <b>The bridge isn't running on this Mac.</b>
+    Figma can't launch anything locally, so a small helper has to run here. Copy this,
+    paste it into Terminal, press Enter. One time only.
+    <code id="install-cmd">git clone https://github.com/Clubroom/FigmaToClaude.git ~/.figma-to-claude/app && ~/.figma-to-claude/app/install.command</code>
+    <button class="ghost" id="copy-install">Copy install command</button>
+  </div>
+
   <div id="result"></div>
+  <textarea id="clipboard" aria-hidden="true"></textarea>
 
 <script>
   var current = null;      // latest selection info
@@ -191,8 +215,12 @@
       // Show the version so a stale copy is visible instead of invisible.
       document.getElementById("laws-label").textContent = laws.ok ? "Laws " + laws.version : "Laws";
 
+      // The install instructions replace the error text when the bridge is missing —
+      // a designer who has never installed it needs the command, not a diagnosis.
+      document.getElementById("install-help").style.display = msg.bridge ? "none" : "block";
+
       if (!msg.bridge) {
-        show(false, "The bridge isn't running. It auto-starts at login — or double-click bridge/start.command once.");
+        document.getElementById("result").className = "";
       } else if (!laws.ok) {
         show(false, "The implementation laws can't be loaded, so sending is blocked. A build without them would guess at values.");
       }
@@ -220,6 +248,17 @@
     this.disabled = true;
     this.textContent = "Sending…";
     post({ type: "build", target: chosenTarget(), pastedUrl: needsPaste && pasted ? pasted : null });
+  };
+
+  document.getElementById("copy-install").onclick = function () {
+    // navigator.clipboard is unavailable in the plugin iframe, so use the old path.
+    var box = document.getElementById("clipboard");
+    box.value = document.getElementById("install-cmd").textContent.trim();
+    box.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    this.textContent = ok ? "Copied — paste it in Terminal" : "Press ⌘C to copy";
+    if (!ok) { document.getElementById("install-cmd").focus(); }
   };
 
   document.getElementById("connect").onclick = function () { post({ type: "setup" }); };

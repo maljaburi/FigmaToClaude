@@ -181,18 +181,61 @@ function looksValid(name, text) {
 // got installed), so a `git pull` before loading picks up an edit to standards/ without
 // any token handling. Throttled to the same window as the standards cache.
 let lastPull = 0;
+let restartPending = false;
+
+// launchd sets this to the agent label. Absent it, we were started by hand via
+// start.command — and exiting then would just stop the bridge with nothing to revive it.
+const UNDER_LAUNCHD = String(process.env.XPC_SERVICE_NAME || "").includes("figma-to-claude");
+
 function refreshFromGit(cb) {
   if (SELF_UPDATE === false) return cb();
   if (Date.now() - lastPull < STANDARDS_TTL_MS) return cb();
   lastPull = Date.now();
   const repo = path.join(__dirname, "..");
   if (!fs.existsSync(path.join(repo, ".git"))) return cb();
+
+  // Record the sha either side of the pull so we know both whether anything arrived
+  // and, specifically, whether any of it was code this process is already running.
   // --ff-only: never rewrite a designer's local edit, just decline to update.
-  sh(`git -C "${repo}" pull --ff-only --quiet`, { timeout: 15000 }, (err, out, errout) => {
-    if (err) console.log(`standards: git pull skipped (${(errout || err.message).split("\n")[0]})`);
-    else standardsCache.clear(); // a pull may have changed them; don't serve the old copy
+  const cmd = `cd "${repo}" && before=$(git rev-parse HEAD) && git pull --ff-only --quiet ` +
+    `&& after=$(git rev-parse HEAD) && echo "$before $after" && git diff --name-only "$before" "$after"`;
+
+  sh(cmd, { timeout: 15000 }, (err, out, errout) => {
+    if (err) {
+      console.log(`standards: git pull skipped (${(errout || err.message).split("\n")[0]})`);
+      return cb();
+    }
+    const lines = out.split("\n").filter(Boolean);
+    const [before, after] = (lines.shift() || "").split(" ");
+    if (!after || before === after) return cb(); // already current
+
+    standardsCache.clear(); // the pull may have changed them; don't serve the old copy
+    console.log(`updated ${String(before).slice(0, 7)} → ${String(after).slice(0, 7)}`);
+
+    // standards/ is re-read from disk every send, so those changes are already live.
+    // bridge/ is the code running right now, and that only changes on a restart.
+    const codeChanged = lines.filter((f) => f.startsWith("bridge/"));
+    if (codeChanged.length) {
+      if (UNDER_LAUNCHD) {
+        restartPending = true;
+        console.log(`  bridge code changed (${codeChanged.join(", ")}) — restarting after this send`);
+      } else {
+        console.log(`  bridge code changed (${codeChanged.join(", ")}) — restart it to pick this up`);
+      }
+    }
     cb();
   });
+}
+
+// Called once the response is out the door: exiting mid-send would drop it. launchd's
+// KeepAlive brings us straight back on the new code.
+function maybeRestart() {
+  if (!restartPending) return;
+  restartPending = false;
+  setTimeout(() => {
+    console.log("restarting to load the new bridge code");
+    process.exit(0);
+  }, 500);
 }
 
 async function loadStandard(name) {
@@ -487,9 +530,10 @@ function handleRequest(req, res) {
       // Make sure the MCP is wired before we launch (idempotent, cached).
       ensureFigmaMcp(() => {
         launchDesktop(dir, prompt, (e, message) => {
-          if (e) { console.error("  error:", e.message); return send(res, 500, "Launch failed: " + e.message); }
+          if (e) { console.error("  error:", e.message); maybeRestart(); return send(res, 500, "Launch failed: " + e.message); }
           console.log("  " + message);
           send(res, 200, `${created ? "Created" : "Reusing"} ${path.basename(dir)}. ` + message);
+          maybeRestart();
         });
       });
     });

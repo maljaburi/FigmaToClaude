@@ -406,7 +406,7 @@ function resolveTarget(data) {
   return { dir, created };
 }
 
-const server = http.createServer((req, res) => {
+function handleRequest(req, res) {
   if (req.method === "OPTIONS") return send(res, 204, "");
 
   // Readiness for the plugin's status dots.
@@ -497,8 +497,17 @@ const server = http.createServer((req, res) => {
   }
 
   send(res, 404, "Not found");
-});
+}
 
+// Bind both loopback addresses explicitly. Passing the "localhost" hostname binds only
+// whichever address DNS happens to return first, so a client that tries the other one
+// gets connection refused. A wildcard bind would also fix it, but this server writes
+// files and launches apps — it has no business being reachable from the network.
+const v6 = http.createServer(handleRequest);
+v6.on("error", (err) => console.log(`(not listening on [::1]:${PORT} — ${err.code || err.message})`));
+v6.listen(PORT, "::1");
+
+const server = http.createServer(handleRequest);
 server.on("error", (err) => {
   if (err.code === "EADDRINUSE") {
     console.error(`Port ${PORT} is already in use — the bridge is probably already running. Exiting.`);
@@ -508,9 +517,7 @@ server.on("error", (err) => {
   process.exit(1);
 });
 
-// Bind on the hostname, not a literal IP: the plugin calls http://localhost:7331,
-// and on some Macs `localhost` resolves to ::1 before 127.0.0.1.
-server.listen(PORT, "localhost", () => {
+server.listen(PORT, "127.0.0.1", () => {
   console.log(`figma → claude bridge listening on http://localhost:${PORT}`);
   console.log(`new prototypes land in: ${PROTOTYPES_DIR}`);
   console.log(`scanning for projects in: ${PROJECT_ROOTS.join(", ")}`);

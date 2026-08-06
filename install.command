@@ -10,13 +10,16 @@
 # Installs a launchd agent so the bridge runs in the background from login onward, and
 # tells you what to do in Figma. Run `bridge/autostart.command uninstall` to remove it.
 
-set -e
+# Deliberately no `set -e`. Sourcing a stranger's shell config below is a coin flip: a
+# trailing `[ -s file ] && source file` that happens to be false makes the whole source
+# return non-zero, and under errexit that kills this script silently before it prints a
+# single line. Every step that actually matters checks its own result with `|| fail`.
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$APP_DIR"
+cd "$APP_DIR" || exit 1
 
-# Pick up the user's normal PATH (nvm / homebrew / official installer).
-[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile" 2>/dev/null
-[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null
+# Pick up the user's normal PATH (nvm / homebrew / official installer), never fatally.
+[ -f "$HOME/.zprofile" ] && { source "$HOME/.zprofile" >/dev/null 2>&1 || true; }
+[ -f "$HOME/.zshrc" ] && { source "$HOME/.zshrc" >/dev/null 2>&1 || true; }
 export PATH="$HOME/.local/bin:$HOME/.claude/bin:$HOME/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 say() { printf "\n\033[1m%s\033[0m\n" "$1"; }

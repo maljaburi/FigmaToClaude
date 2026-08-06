@@ -21,23 +21,29 @@ anything on your Mac by itself. That's why there are two halves:
 The prompt sent through the deeplink is one line pointing at the brief file. The laws
 live in `CLAUDE.md` so they stay in context for the whole build, not just the first turn.
 
-## One-time setup
+## Setup
+
+Paste this into Terminal:
 
 ```bash
-open ~/figma-to-claude-code/bridge/autostart.command
+git clone https://github.com/Clubroom/FigmaToClaude.git ~/.figma-to-claude/app && ~/.figma-to-claude/app/install.command
 ```
 
-That installs a launchd agent so the bridge is always running (`KeepAlive`, logs to
-`~/Library/Logs/figma-to-claude-bridge.log`). Pass `uninstall` to remove it. For a
-one-off run without installing, double-click `bridge/start.command` instead. Don't run
-both, they fight over the port.
+It checks for Node, installs a launchd agent so the bridge runs from login onward
+(`KeepAlive`, logs to `~/Library/Logs/figma-to-claude-bridge.log`), waits for the bridge
+to actually answer on its port, and then prints the two remaining Figma steps. Re-running
+it updates to the latest and is safe.
 
-Then import `plugin/manifest.json` in Figma: **Plugins → Development → Import plugin
-from manifest**.
+Then in Figma: **Plugins → Development → Import plugin from manifest**, and pick
+`plugin/manifest.json` from the cloned folder.
 
 The bridge auto-connects the Figma MCP to Claude Code on startup. The one thing that
 can't be automated is the Figma OAuth approval, so run `/mcp` in Claude Code once and
 approve Figma in your browser.
+
+To remove it: `~/.figma-to-claude/app/bridge/autostart.command uninstall`. For a one-off
+run without installing, double-click `bridge/start.command` instead — but don't run both,
+they fight over the port.
 
 ## Using it
 
@@ -76,25 +82,33 @@ confirm the managed block is really there. Anything outside the block is preserv
 
 ### Keeping every designer on the same prompts
 
-By default each Mac uses its own copy in `standards/`, so an edit only reaches whoever
-pulls it. For a team, host the directory once and point every bridge at it:
+**Edit `standards/`, commit, push. That's the whole distribution mechanism.**
 
-```bash
-STANDARDS_URL=https://raw.githubusercontent.com/<org>/<repo>/main/standards/
+Because this repo is private, `raw.githubusercontent.com` would return a login page
+rather than the file, so the bridge distributes over git instead of HTTP. Every designer
+already has a clone, since that's how the bridge got installed, so before each send the
+bridge runs:
+
+```
+git -C <clone> pull --ff-only --quiet
 ```
 
-Set that in the launchd plist's `EnvironmentVariables` and every designer picks up an
-edit on their next send. Per file, the resolution order is:
+Throttled to once every 5 minutes, and `--ff-only` so a designer's accidental local edit
+is reported rather than silently overwritten. If the pull fails for any reason, it logs
+and carries on with the copy already on disk, so a network blip never strips the
+standards out of a build. Set `SELF_UPDATE=0` to turn it off.
+
+`STANDARDS_URL` remains for hosting the directory somewhere anonymously readable. Per
+file, the resolution order is:
 
 1. `STANDARDS_URL` + filename, if the body passes a sanity check. `figma-laws.md` must
    contain the managed-block marker and the templates must contain a `{{placeholder}}`,
    which stops an SSO login page returning HTTP 200 from being written in as "the laws"
 2. the last good fetch, cached under `~/.figma-to-claude/standards/`
-3. the bundled copy in `standards/`
+3. the copy in `standards/`, kept current by the git pull above
 
-So a flaky network degrades to slightly stale prompts, never to no prompts. The plugin
-shows a combined version hash next to the Laws dot, the bridge log breaks it down per
-file, and every brief records the laws version and source that built it.
+The plugin shows a combined version hash next to the Laws dot and the bridge log breaks
+it down per file, so a designer running stale prompts is visible rather than invisible.
 
 ## Publishing to the org
 

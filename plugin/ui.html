@@ -219,10 +219,21 @@
       // a designer who has never installed it needs the command, not a diagnosis.
       document.getElementById("install-help").style.display = msg.bridge ? "none" : "block";
 
+      // Report the first thing that's actually blocking, in the order it blocks.
       if (!msg.bridge) {
         document.getElementById("result").className = "";
+      } else if (!msg.claudeApp) {
+        show(false, "Claude Code desktop isn't installed on this Mac. Sending opens it, so install it first.");
+      } else if (!msg.claudeCli) {
+        show(false, "The claude command line tool isn't on PATH. The bridge needs it to connect the Figma MCP.");
+      } else if (msg.figmaMcpState === "needs-auth") {
+        show(false, "Figma is connected but not authorized yet. Run /mcp in Claude Code and approve Figma in your browser. One time only.");
+      } else if (msg.figmaMcpState === "missing") {
+        show(false, "The Figma MCP isn't set up. Click Connect Figma MCP below.");
       } else if (!laws.ok) {
         show(false, "The implementation laws can't be loaded, so sending is blocked. A build without them would guess at values.");
+      } else {
+        document.getElementById("result").className = "";
       }
       return;
     }

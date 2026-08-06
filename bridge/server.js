@@ -72,6 +72,30 @@ function hasClaude(cb) {
   sh("command -v claude || true", (e, out) => { if (out) claudePathCache = out; cb(!!out, out); });
 }
 function hasFigmaMcp(cb) { sh("claude mcp get figma >/dev/null 2>&1 && echo yes || echo no", (e, out) => cb(out === "yes")); }
+
+// The deeplink opens the desktop app, so the CLI being present says nothing about
+// whether the thing we're about to launch actually exists.
+function hasClaudeApp() {
+  return ["/Applications/Claude.app", path.join(HOME, "Applications", "Claude.app")]
+    .some((p) => fs.existsSync(p));
+}
+
+// Registered is not the same as authorized: `mcp add` succeeds immediately but the
+// server sits at "Needs authentication" until someone approves the OAuth in a browser.
+// Reporting that as connected sends designers into builds that can't read the design.
+let mcpState = { value: null, at: 0 };
+const MCP_STATE_TTL_MS = 20000;
+function figmaMcpState(cb) {
+  if (mcpState.value && Date.now() - mcpState.at < MCP_STATE_TTL_MS) return cb(mcpState.value);
+  sh("claude mcp get figma 2>&1", (e, out) => {
+    const text = out || "";
+    let state = "missing";
+    if (/needs authentication/i.test(text)) state = "needs-auth";
+    else if (/connected/i.test(text)) state = "connected";
+    mcpState = { value: state, at: Date.now() };
+    cb(state);
+  });
+}
 function addFigmaMcp(cb) { sh(`claude mcp add --scope user --transport http figma ${FIGMA_MCP_URL}`, cb); }
 
 function ensureFigmaMcp(cb) {
@@ -394,12 +418,18 @@ const server = http.createServer((req, res) => {
           ? { ok: true, version: std.version, source: std.source }
           : { ok: false, missing: std.missing },
       };
-      hasClaude((claude, p) => {
-        base.claude = claude;
+      base.claudeApp = hasClaudeApp();
+      hasClaude((cli, p) => {
+        base.claudeCli = cli;
         base.claudePath = p;
-        if (!claude) return send(res, 200, Object.assign(base, { figmaMcp: false }), true);
-        if (figmaReady) return send(res, 200, Object.assign(base, { figmaMcp: true }), true);
-        hasFigmaMcp((mcp) => send(res, 200, Object.assign(base, { figmaMcp: mcp }), true));
+        // Both halves matter: the CLI wires up the MCP, the desktop app receives the
+        // deeplink. Having one without the other fails at a different step each time.
+        base.claude = cli && base.claudeApp;
+        if (!cli) return send(res, 200, Object.assign(base, { figmaMcp: false, figmaMcpState: "missing" }), true);
+        // Deliberately not short-circuiting on the `figmaReady` flag: that only records
+        // that `mcp add` ran, which is true long before anyone authorizes it.
+        figmaMcpState((state) => send(res, 200,
+          Object.assign(base, { figmaMcp: state === "connected", figmaMcpState: state }), true));
       });
     });
     return;

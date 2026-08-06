@@ -1,0 +1,14 @@
+{
+  "name": "Send to Claude Code",
+  "id": "send-to-claude-code-local",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma", "dev"],
+  "documentAccess": "dynamic-page",
+  "enablePrivatePluginApi": true,
+  "networkAccess": {
+    "allowedDomains": ["http://localhost:7331"],
+    "reasoning": "Sends the selected frame's link to a local bridge on this machine that launches Claude Code to build it."
+  }
+}

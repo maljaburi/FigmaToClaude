@@ -1,0 +1,8 @@
+{
+  "name": "figma-to-claude-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local bridge that launches Claude Code from the Send-to-Claude-Code Figma plugin.",
+  "bin": { "figma-claude-bridge": "server.js" },
+  "scripts": { "start": "node server.js" }
+}

@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  :root { font-family: Inter, -apple-system, sans-serif; font-size: 11px; }
+  body {
+    margin: 0; padding: 12px;
+    color: var(--figma-color-text);
+    background: var(--figma-color-bg);
+  }
+  .dots { display: flex; gap: 12px; margin-bottom: 12px; font-size: 10px; }
+  .dot { display: flex; align-items: center; gap: 5px; color: var(--figma-color-text-secondary); }
+  .dot i {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--figma-color-icon-danger); flex: none;
+  }
+  .dot.on i { background: var(--figma-color-icon-success); }
+
+  .card {
+    border: 1px solid var(--figma-color-border);
+    border-radius: 6px; padding: 10px; margin-bottom: 12px;
+  }
+  .frame-name {
+    font-size: 13px; font-weight: 600; margin-bottom: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .meta { color: var(--figma-color-text-secondary); font-size: 10px; }
+  .empty { color: var(--figma-color-text-secondary); }
+
+  label { display: block; font-weight: 600; margin-bottom: 5px; }
+  select, input[type=text] {
+    width: 100%; box-sizing: border-box; padding: 6px 7px; font-size: 11px;
+    font-family: inherit;
+    border: 1px solid var(--figma-color-border); border-radius: 5px;
+    background: var(--figma-color-bg-secondary); color: var(--figma-color-text);
+  }
+  .field { margin-bottom: 12px; }
+  .hint { color: var(--figma-color-text-secondary); font-size: 10px; margin-top: 5px; }
+
+  button {
+    width: 100%; padding: 9px; font-size: 11px; font-weight: 600; font-family: inherit;
+    border: none; border-radius: 6px; cursor: pointer;
+    background: var(--figma-color-bg-brand); color: var(--figma-color-text-onbrand);
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  button.ghost {
+    background: transparent; color: var(--figma-color-text-secondary);
+    border: 1px solid var(--figma-color-border); margin-top: 7px; font-weight: 400;
+  }
+
+  #result {
+    margin-top: 12px; padding: 9px; border-radius: 5px; font-size: 10px;
+    line-height: 1.45; white-space: pre-wrap; display: none;
+  }
+  #result.ok { display: block; background: var(--figma-color-bg-success-tertiary); }
+  #result.bad { display: block; background: var(--figma-color-bg-danger-tertiary); }
+  #paste-field { display: none; }
+</style>
+</head>
+<body>
+  <div class="dots">
+    <span class="dot" id="d-bridge"><i></i>Bridge</span>
+    <span class="dot" id="d-claude"><i></i>Claude Code</span>
+    <span class="dot" id="d-mcp"><i></i>Figma MCP</span>
+    <span class="dot" id="d-laws"><i></i><span id="laws-label">Laws</span></span>
+  </div>
+
+  <div class="card">
+    <div class="frame-name" id="frame-name">Nothing selected</div>
+    <div class="meta" id="frame-meta">Click the frame or section on the canvas.</div>
+  </div>
+
+  <div class="field" id="paste-field">
+    <label for="pasted">Frame link</label>
+    <input type="text" id="pasted" placeholder="Paste the Figma frame link" />
+    <div class="hint">Needed until the plugin is published privately to the org.</div>
+  </div>
+
+  <div class="field">
+    <label for="target">Build into</label>
+    <select id="target"></select>
+    <div class="hint" id="target-hint"></div>
+  </div>
+
+  <button id="send" disabled>Send to Claude Code</button>
+  <div class="hint" id="effort-tip">
+    For best results, set the model to <b>Opus 5</b> at <b>Max</b> effort in Claude Code.
+    The project is pinned to Opus, but Max effort can only be set in the session.
+  </div>
+  <button class="ghost" id="connect" style="display:none">Connect Figma MCP</button>
+
+  <div id="result"></div>
+
+<script>
+  var current = null;      // latest selection info
+  var projects = [];
+  var prototypesDir = null;
+  var savedTarget = null;
+  var needsPaste = false;
+
+  function post(msg) { parent.postMessage({ pluginMessage: msg }, "*"); }
+
+  function setDot(id, on) {
+    document.getElementById(id).className = on ? "dot on" : "dot";
+  }
+
+  function chosenTarget() {
+    var value = document.getElementById("target").value;
+    if (value === "__new__") return { mode: "new" };
+    return { mode: "existing", path: value };
+  }
+
+  function refreshSendState() {
+    var haveFrame = current && !current.error;
+    var pasted = document.getElementById("pasted").value.trim();
+    // A send with no frame link can't read the design, so don't allow it.
+    var haveLink = (haveFrame && current.fileKey) || pasted;
+    document.getElementById("send").disabled = !(haveFrame && haveLink);
+  }
+
+  function renderTargets() {
+    var select = document.getElementById("target");
+    var html = '<option value="__new__">New prototype</option>';
+    for (var i = 0; i < projects.length; i++) {
+      html += '<option value="' + projects[i].path + '">' + projects[i].name + "</option>";
+    }
+    select.innerHTML = html;
+
+    if (savedTarget && savedTarget.mode === "existing" && savedTarget.path) {
+      select.value = savedTarget.path;
+      if (select.value !== savedTarget.path) select.value = "__new__"; // project went away
+    } else {
+      select.value = "__new__";
+    }
+    renderTargetHint();
+  }
+
+  function renderTargetHint() {
+    var hint = document.getElementById("target-hint");
+    if (document.getElementById("target").value === "__new__") {
+      hint.textContent = prototypesDir ? "A new folder in " + prototypesDir : "A new folder for this frame.";
+    } else {
+      hint.textContent = "Added as a new screen in this project.";
+    }
+  }
+
+  function show(ok, message) {
+    var el = document.getElementById("result");
+    el.className = ok ? "ok" : "bad";
+    el.textContent = message;
+  }
+
+  onmessage = function (event) {
+    var msg = event.data.pluginMessage;
+    if (!msg) return;
+
+    if (msg.type === "selection") {
+      var info = msg.info || {};
+      current = info;
+      var name = document.getElementById("frame-name");
+      var meta = document.getElementById("frame-meta");
+      if (info.error) {
+        name.textContent = "Nothing selected";
+        name.className = "frame-name empty";
+        meta.textContent = info.error;
+      } else {
+        name.textContent = info.name;
+        name.className = "frame-name";
+        meta.textContent = info.type.toLowerCase() + " · " + info.width + "x" + info.height + " · " + info.page;
+        // Without a file key there's no link for Claude Code to read the design from,
+        // so ask for one rather than sending a build that can only guess.
+        needsPaste = !info.fileKey;
+        document.getElementById("paste-field").style.display = needsPaste ? "block" : "none";
+      }
+      refreshSendState();
+      return;
+    }
+
+    if (msg.type === "status") {
+      setDot("d-bridge", !!msg.bridge);
+      setDot("d-claude", !!msg.claude);
+      setDot("d-mcp", !!msg.figmaMcp);
+
+      // The bridge connects the Figma MCP on startup, so this button is only for the
+      // rare case where that failed. Hide it when there's nothing to fix.
+      document.getElementById("connect").style.display = msg.figmaMcp ? "none" : "block";
+
+      var laws = msg.laws || { ok: false };
+      setDot("d-laws", !!laws.ok);
+      // Show the version so a stale copy is visible instead of invisible.
+      document.getElementById("laws-label").textContent = laws.ok ? "Laws " + laws.version : "Laws";
+
+      if (!msg.bridge) {
+        show(false, "The bridge isn't running. It auto-starts at login — or double-click bridge/start.command once.");
+      } else if (!laws.ok) {
+        show(false, "The implementation laws can't be loaded, so sending is blocked. A build without them would guess at values.");
+      }
+      return;
+    }
+
+    if (msg.type === "projects") {
+      projects = msg.projects || [];
+      prototypesDir = msg.prototypesDir || null;
+      savedTarget = msg.saved || null;
+      renderTargets();
+      return;
+    }
+
+    if (msg.type === "result") {
+      show(msg.ok, msg.message);
+      document.getElementById("send").disabled = false;
+      document.getElementById("send").textContent = "Send to Claude Code";
+      return;
+    }
+  };
+
+  document.getElementById("send").onclick = function () {
+    var pasted = document.getElementById("pasted").value.trim();
+    this.disabled = true;
+    this.textContent = "Sending…";
+    post({ type: "build", target: chosenTarget(), pastedUrl: needsPaste && pasted ? pasted : null });
+  };
+
+  document.getElementById("connect").onclick = function () { post({ type: "setup" }); };
+  document.getElementById("target").onchange = renderTargetHint;
+  document.getElementById("pasted").oninput = refreshSendState;
+
+  post({ type: "init" });
+</script>
+</body>
+</html>

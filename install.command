@@ -2,7 +2,7 @@
 # One-step setup for a designer's Mac.
 #
 #   Paste this into Terminal:
-#     git clone https://github.com/Clubroom/FigmaToClaude.git ~/.figma-to-claude/app \
+#     git clone https://github.com/maljaburi/FigmaToClaude.git ~/.figma-to-claude/app \
 #       && ~/.figma-to-claude/app/install.command
 #
 #   Already cloned? Just double-click this file. Re-running it updates to the latest.

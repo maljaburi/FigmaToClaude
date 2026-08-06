@@ -12,21 +12,22 @@ anything on your Mac by itself. That's why there are two halves:
 1. **The plugin** reads the selected frame and POSTs its file key and node id to the
    bridge.
 2. **The bridge** (a small Node server on `localhost:7331`) writes the implementation
-   laws into the target project's `CLAUDE.md`, writes a per-frame brief into
-   `.claude/figma/`, and opens Claude Code desktop via
+   laws into the target project's `CLAUDE.md` and opens Claude Code desktop via
    `claude://code/new?q=...&folder=...`.
 3. **Claude Code** reads the actual design through the Figma MCP (`get_design_context`,
    `get_variable_defs`, `get_screenshot`, `download_assets`) and builds it.
 
-The prompt sent through the deeplink is one line pointing at the brief file. The laws
-live in `CLAUDE.md` so they stay in context for the whole build, not just the first turn.
+The prompt carries the frame, the Dev Mode link, and all the laws inline, so a designer
+reading the composer can see exactly what's about to happen. The laws also go into
+`CLAUDE.md`, which keeps them in context for the whole build rather than only the first
+turn.
 
 ## Setup
 
 Paste this into Terminal:
 
 ```bash
-git clone https://github.com/Clubroom/FigmaToClaude.git ~/.figma-to-claude/app && ~/.figma-to-claude/app/install.command
+git clone https://github.com/maljaburi/FigmaToClaude.git ~/.figma-to-claude/app && ~/.figma-to-claude/app/install.command
 ```
 
 It checks for Node, installs a launchd agent so the bridge runs from login onward
@@ -49,10 +50,10 @@ they fight over the port.
 
 1. Select a frame or section on the canvas.
 2. Run the plugin.
-3. Pick where it builds. **New prototype** makes a fresh folder in
-   `~/Design-Prototypes`. Or pick an existing project to add the frame as a new screen.
-   The choice is remembered per Figma file.
-4. Click **Send to Claude Code**. Claude Code opens with the brief loaded.
+3. Pick where it builds. **New prototype** makes a folder per frame in
+   `~/Design-Prototypes`, reused on later sends. Or pick an existing project to add the
+   frame as a new screen. The choice is remembered per Figma file.
+4. Click **Send to Claude Code**. Claude Code opens with the prompt loaded.
 5. Press Enter to start the build.
 
 Step 5 is a real Enter press. The `claude://code/new` route pre-fills the prompt but
@@ -65,29 +66,27 @@ inside `server.js`, so the wording can be changed without shipping code.
 
 | File | Becomes | Editable placeholders |
 |---|---|---|
-| `figma-laws.md` | a managed block in the project's `CLAUDE.md` | none, it's prose |
-| `prompt.md` | the text in the Claude Code composer | `{{frameName}}` `{{frameType}}` `{{size}}` `{{designSource}}` `{{brief}}` |
-| `brief.md` | `.claude/figma/handoff-<id>.md` | the above plus `{{file}}` `{{page}}` `{{nodeId}}` `{{devLink}}` `{{designSection}}` `{{handoffId}}` `{{lawsVersion}}` `{{lawsSource}}` `{{sentAt}}` |
+| `figma-laws.md` | inlined into the prompt, and a managed block in the project's `CLAUDE.md` | none, it's prose |
+| `prompt.md` | the text in the Claude Code composer | `{{frameName}}` `{{frameType}}` `{{size}}` `{{file}}` `{{page}}` `{{nodeId}}` `{{devLink}}` `{{designSource}}` `{{laws}}` |
 
 An unknown `{{placeholder}}` is left visible in the output rather than silently becoming
 an empty string, so a typo shows up instead of quietly dropping content.
 
-**If any of the three can't be loaded, the send is refused.** Nothing is written and
-Claude Code is not opened. A build missing its standards would silently guess at values,
-which is worse than no build. The plugin shows a red **Laws** dot naming the missing file.
+**If either can't be loaded, the send is refused.** Nothing is written and Claude Code is
+not opened. A build missing its standards would silently guess at values, which is worse
+than no build. The plugin shows a red **Laws** dot naming the missing file.
 
-The laws are written into `CLAUDE.md`, not the prompt, so they stay in context for the
-whole build rather than only the first turn. After writing, the file is read back to
-confirm the managed block is really there. Anything outside the block is preserved.
+The laws appear in both places on purpose. The prompt is what a designer reads; the
+`CLAUDE.md` copy is what still holds after forty tool calls, when the prompt has scrolled
+out of the way. After writing, the file is read back to confirm the managed block is
+really there. Anything outside the block is preserved.
 
 ### Keeping every designer on the same prompts
 
 **Edit `standards/`, commit, push. That's the whole distribution mechanism.**
 
-Because this repo is private, `raw.githubusercontent.com` would return a login page
-rather than the file, so the bridge distributes over git instead of HTTP. Every designer
-already has a clone, since that's how the bridge got installed, so before each send the
-bridge runs:
+The bridge distributes over git rather than HTTP. Every designer already has a clone,
+since that's how the bridge got installed, so before each send it runs:
 
 ```
 git -C <clone> pull --ff-only --quiet
@@ -112,10 +111,16 @@ it down per file, so a designer running stale prompts is visible rather than inv
 
 ## Publishing to the org
 
-`figma.fileKey` returns undefined until the plugin is published **privately to the
-organization** with `enablePrivatePluginApi` in the manifest. Until then the plugin shows
-a "Frame link" field and you paste the frame link once per send. Publishing privately
-removes that step and is the main thing standing between this and a true one-click flow.
+Publish it **privately to the organization**, never publicly to Community: a public plugin
+can't use `enablePrivatePluginApi`, so `figma.fileKey` would return undefined and every
+send would lose the Figma link.
+
+Private org plugins skip Figma's review and any org member can publish one, so this
+doesn't need an admin. In Figma: **Plugins → Development → Publish**, then set
+**Publish to** to your organization. Teammates then find it under **All teams → Plugins**.
+
+Figma assigns a real plugin ID on publish and rewrites `manifest.json`. Commit that back,
+or the next publish creates a second, separate plugin.
 
 ## Pinning the model
 

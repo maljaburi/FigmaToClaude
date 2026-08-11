@@ -661,9 +661,10 @@ function pinModel(dir) {
 
   const target = path.join(dir, ".claude", "settings.json");
   let settings = {};
+  let raw = null;
   let existed = false;
   try {
-    const raw = fs.readFileSync(target, "utf8");
+    raw = fs.readFileSync(target, "utf8");
     existed = true;
     settings = JSON.parse(raw);
   } catch (e) {
@@ -693,9 +694,20 @@ function pinModel(dir) {
     }
   }
 
+  const next = JSON.stringify(settings, null, 2) + "\n";
+  const note = `${settings.model || "(default)"}${settings.effortLevel ? " @ " + settings.effortLevel : ""}`;
+
+  // Only when it would actually change something. Claude Code re-asks whether you trust a
+  // project after its settings file is touched, and a second send into a folder already
+  // built into produces byte-identical content — so writing unconditionally asked the
+  // designer to trust the same folder again on every send, having just trusted it. This is
+  // the guard writeLaws() has always had on CLAUDE.md, which is why that file survives a
+  // repeat send untouched and this one did not.
+  if (raw === next) return note;
+
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  writeFileAtomic(target, JSON.stringify(settings, null, 2) + "\n");
-  return `${settings.model || "(default)"}${settings.effortLevel ? " @ " + settings.effortLevel : ""}`;
+  writeFileAtomic(target, next);
+  return note;
 }
 
 // Always hand Claude Code a Dev Mode link (m=dev). The plugin already builds one, but

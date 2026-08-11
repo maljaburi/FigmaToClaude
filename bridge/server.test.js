@@ -122,6 +122,23 @@ test("pinModel writes model and effort into .claude/settings.json", (t) => {
   assert.equal(settings.effortLevel, "xhigh");
 });
 
+// Claude Code re-asks whether the designer trusts a project once its settings file has been
+// touched, so a repeat send into the same folder was asking them to trust it again on every
+// build. Asserted through the mtime rather than the contents, because the contents were
+// always right — it was the write itself that did the damage.
+test("pinModel doesn't touch a settings file that already says the right thing", (t) => {
+  const dir = tmpdir(t);
+  pinModel(dir);
+
+  const file = path.join(dir, ".claude", "settings.json");
+  const earlier = new Date(Date.now() - 60_000);
+  fs.utimesSync(file, earlier, earlier);
+
+  pinModel(dir);
+  assert.equal(Math.floor(fs.statSync(file).mtimeMs), Math.floor(earlier.getTime()),
+    "a second send with nothing to change rewrote the file");
+});
+
 test("pinModel preserves unrelated settings", (t) => {
   const dir = tmpdir(t);
   fs.mkdirSync(path.join(dir, ".claude"));

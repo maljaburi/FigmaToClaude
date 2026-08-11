@@ -1,16 +1,16 @@
 # Send to Claude Code
 
-A Figma plugin that turns the selected frames into built screens. Designer selects a
-frame, clicks one button, and Claude Code desktop opens on the right project with the
-design brief loaded.
+A Figma plugin that turns the selected frames into built screens. Designer selects frames
+or a section, clicks one button, and Claude Code desktop opens on the right project with
+the design brief loaded.
 
 ## How it works
 
 A Figma plugin can only reach `http`, `https`, `ws`, and `wss`, so it can't launch
 anything on your Mac by itself. That's why there are two halves:
 
-1. **The plugin** reads the selected frame and POSTs its file key and node id to the
-   bridge.
+1. **The plugin** expands the selection into a list of screens — a section becomes the
+   frames inside it — and POSTs the file key and every node id to the bridge.
 2. **The bridge** (a small Node server on `localhost:7331`) writes the implementation
    laws into the target project's `CLAUDE.md` and opens Claude Code desktop via
    `claude://code/new?q=...&folder=...`.
@@ -25,8 +25,10 @@ first turn, and the prompt points at that file and at
 — the raw URL, so anything that follows it gets the markdown rather than a GitHub page.
 They were once pasted into the composer as well, which put the entire ruleset on top of a brief
 that now runs about 830 characters for two screens — and that length was costing exactly the
-review the prompt existed to enable. Since that link serves whatever is on `main`, an edit to the
-laws only becomes canonical once it's pushed.
+review the prompt existed to enable. That link serves whatever is on `main`, while the copy
+written into the project comes from the designer's own clone, which follows `release` — so
+between a push and a release the two can differ, and the `CLAUDE.md` in the project is the
+one that governs the build.
 
 ## Setup
 
@@ -192,8 +194,11 @@ file, the resolution order is:
 2. the last good fetch, cached under `~/.figma-to-claude/standards/`
 3. the copy in `standards/`, kept current by the git pull above
 
-The success screen shows a combined version hash and the bridge log breaks it down per
-file, so a designer running stale prompts is visible rather than invisible.
+Settings reports the version the standards resolved to, on its **Standards** row, and the
+bridge log breaks that down per file — so a designer running stale prompts is visible
+rather than invisible. It is deliberately not on the setup success screen: that screen is
+unreachable while the standards are broken, so the only thing it could ever show there is
+a tick.
 
 ## Shipping an update
 
@@ -209,13 +214,26 @@ not `main`. Work lands on `main` as usual and reaches nobody; a release is one
 fast-forward:
 
 ```bash
-git checkout release && git merge --ff-only main && git push origin release
+git push origin main:release
 ```
+
+Push the refspec rather than checking `release` out. A local `release` branch is somewhere
+to accidentally commit, and a commit made there is live on every machine before it has been
+reviewed anywhere else — which is the failure this branch exists to prevent.
 
 Within five minutes every designer's next send pulls it, and if anything under `bridge/`
 changed the bridge restarts itself onto the new code. Nobody installs anything. Cut a
 GitHub release against that commit too if you want a changelog — nothing reads it, but
 it's the record of what `release` pointed at and when.
+
+**Creating `release` for the first time, point it at what is already running**, not at
+`main`. Until the branch exists on the remote every installed machine is still following
+`main`, so creating it at the current `main` ships whatever has accumulated there to
+everyone at once — the opposite of what the branch is for:
+
+```bash
+git push origin <sha-of-what-is-live>:refs/heads/release
+```
 
 **Rolling back means going forwards.** Clients pull with `--ff-only`, which is what stops
 an update from overwriting a designer's local edit — so force-pushing `release` backwards

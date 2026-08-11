@@ -2,8 +2,14 @@
 # One-step setup for a designer's Mac.
 #
 #   Paste this into Terminal:
-#     git clone https://github.com/maljaburi/FigmaToClaude.git ~/.figma-to-claude/app \
+#     [ -d ~/.figma-to-claude/app/.git ] \
+#       || git clone https://github.com/maljaburi/FigmaToClaude.git ~/.figma-to-claude/app \
 #       && ~/.figma-to-claude/app/install.command
+#
+#   The guard is what makes that safe to paste twice: git refuses to clone into a directory
+#   that already exists, and with a bare `clone && install` the && then swallows the install
+#   step — so the second run, which is the one someone reaches for when something is wrong,
+#   did nothing but print a fatal error.
 #
 #   Already cloned? Just double-click this file. Re-running it updates to the latest.
 #
@@ -47,25 +53,22 @@ if [ -d .git ]; then
   if ! git pull --ff-only --quiet 2>/dev/null; then
     echo "  (couldn't fast-forward — you may have local changes. Continuing with what's here.)"
   fi
-  echo "  version $(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  # The branch is the update channel, so it belongs next to the version: a machine that is
+  # somehow on `main` while the org is on `release` looks identical without it.
+  echo "  version $(git rev-parse --short HEAD 2>/dev/null || echo unknown) on $(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
 fi
 
 # ---- the bridge -------------------------------------------------------------
 say "Starting the bridge"
-./bridge/autostart.command >/dev/null || fail "Couldn't install the launchd agent."
+# Not silenced: autostart.command is where the version-manager warning, the port warning
+# and the launchctl recovery instructions are printed. Sending them to /dev/null meant a
+# failure here told the designer only that something "couldn't install".
+./bridge/autostart.command || fail "Couldn't install the launchd agent. The output above says why."
 
-# Give launchd a moment, then prove it's actually answering.
+# autostart.command already waits for the bridge to answer, so by this point it either
+# came up or that script exited non-zero.
 PORT="${PORT:-7331}"
-for i in $(seq 1 15); do
-  if curl -sf -m 2 "http://localhost:$PORT/status" >/dev/null 2>&1; then break; fi
-  sleep 1
-done
-
-if curl -sf -m 2 "http://localhost:$PORT/status" >/dev/null 2>&1; then
-  echo "  bridge is running on http://localhost:$PORT"
-else
-  fail "The bridge didn't come up. Check ~/Library/Logs/figma-to-claude-bridge.log"
-fi
+echo "  bridge is running on http://127.0.0.1:$PORT"
 
 # ---- what's left, which is all in Figma -------------------------------------
 say "Done. Two things left, both in Figma:"
@@ -79,6 +82,7 @@ cat <<STEPS
   The first time you send, Claude Code may ask you to authorize Figma.
   Run /mcp in Claude Code once and approve it in the browser.
 
-  For best results set the model to Opus 5 at Max effort in Claude Code.
+  Each project is pinned to Opus at xhigh effort automatically. For the very
+  top level, type /effort max in the session — max can't be saved to a project.
 
 STEPS

@@ -3,51 +3,303 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  :root { font-family: Inter, -apple-system, sans-serif; font-size: 11px; }
+  /* One value for the panel's inset. The rail and the action bar reach past it to the panel
+     edges by negating it, and when those were three separate literals they drifted apart
+     the first time the padding changed. */
+  :root { font-family: Inter, -apple-system, sans-serif; font-size: 11px; --pad: 16px; --bleed: -16px; }
+  * { box-sizing: border-box; }
+  /* height, not min-height. Under min-height the body grows past the window whenever the
+     content does, so a flex child asking to scroll has unbounded room and never scrolls —
+     a 30-screen list simply pushed the send button out of the window. A fixed viewport
+     height is what gives the overflow somewhere to happen. */
   body {
-    margin: 0; padding: 12px;
+    margin: 0; padding: var(--pad) var(--pad) 24px;
+    height: 100vh;
+    display: flex; flex-direction: column;
     color: var(--figma-color-text);
     background: var(--figma-color-bg);
   }
-  .dots { display: flex; gap: 12px; margin-bottom: 12px; font-size: 10px; }
-  .dot { display: flex; align-items: center; gap: 5px; color: var(--figma-color-text-secondary); }
-  .dot i {
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--figma-color-icon-danger); flex: none;
-  }
-  .dot.on i { background: var(--figma-color-icon-success); }
+  .hidden { display: none !important; }
 
-  .card {
-    border: 1px solid var(--figma-color-border);
-    border-radius: 6px; padding: 10px; margin-bottom: 12px;
-  }
-  .frame-name {
-    font-size: 13px; font-weight: 600; margin-bottom: 3px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .meta { color: var(--figma-color-text-secondary); font-size: 10px; }
-  .empty { color: var(--figma-color-text-secondary); }
+  /* Figma does not always grant the height the panel asks for. Whatever it hands over, the
+     send button and the sign-off sit against the bottom of it, 24px clear of the edge —
+     that 24px is the body's bottom padding, so changing it moves the whole block. */
+  /* min-height: 0 has to be on every link in the chain from the body down to the scrolling
+     list. A flex item stops shrinking at its content by default, so one link left at auto
+     re-establishes the floor and the overflow reappears further up. */
+  body > div[id^="view-"] { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .foot { margin-top: auto; }
 
-  label { display: block; font-weight: 600; margin-bottom: 5px; }
-  select, input[type=text] {
-    width: 100%; box-sizing: border-box; padding: 6px 7px; font-size: 11px;
-    font-family: inherit;
-    border: 1px solid var(--figma-color-border); border-radius: 5px;
-    background: var(--figma-color-bg-secondary); color: var(--figma-color-text);
-  }
-  .field { margin-bottom: 12px; }
-  .hint { color: var(--figma-color-text-secondary); font-size: 10px; margin-top: 5px; }
+  /* fitHeight still asks for the snug height, and has to measure the content rather than
+     the stretched body — otherwise it would read back the window height it is trying to
+     replace and the panel could never shrink again. */
+  body.measuring { height: auto; min-height: 0; }
 
+
+  /* ---------- shared ---------- */
   button {
-    width: 100%; padding: 9px; font-size: 11px; font-weight: 600; font-family: inherit;
+    width: 100%; padding: 10px; font-size: 11px; font-weight: 600; font-family: inherit;
     border: none; border-radius: 6px; cursor: pointer;
     background: var(--figma-color-bg-brand); color: var(--figma-color-text-onbrand);
   }
   button:disabled { opacity: 0.4; cursor: default; }
+  button:not(:disabled):hover { filter: brightness(1.08); }
   button.ghost {
     background: transparent; color: var(--figma-color-text-secondary);
-    border: 1px solid var(--figma-color-border); margin-top: 7px; font-weight: 400;
+    border: 1px solid var(--figma-color-border); font-weight: 400;
   }
+  /* Keyboard users get a visible target; pointer users don't get a ring on click. */
+  :focus-visible { outline: 2px solid var(--figma-color-border-selected); outline-offset: 1px; }
+  .muted { color: var(--figma-color-text-secondary); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  }
+
+  /* ---------- onboarding ---------- */
+  .ob-title { font-size: 14px; font-weight: 600; margin-bottom: 5px; }
+  .ob-sub { color: var(--figma-color-text-secondary); line-height: 1.5; margin-bottom: 18px; }
+
+  .step { display: flex; gap: 10px; margin-bottom: 18px; }
+  .step .num {
+    flex: none; width: 18px; height: 18px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 9px; font-weight: 600; margin-top: 1px;
+    background: var(--figma-color-bg-secondary);
+    color: var(--figma-color-text-secondary);
+    border: 1px solid var(--figma-color-border);
+  }
+  .step .body { flex: 1; min-width: 0; }
+  .step .t { font-weight: 600; margin-bottom: 3px; }
+  .step .d { color: var(--figma-color-text-secondary); line-height: 1.5; }
+
+  kbd {
+    font-family: inherit; font-size: 10px; padding: 1px 4px; border-radius: 3px;
+    border: 1px solid var(--figma-color-border);
+    background: var(--figma-color-bg-secondary);
+  }
+
+  code.cmd {
+    display: block; margin: 8px 0 7px; padding: 9px 10px;
+    border-radius: 5px; border: 1px solid var(--figma-color-border);
+    font-family: ui-monospace, Menlo, monospace; font-size: 10px; line-height: 1.65;
+    overflow-wrap: break-word; user-select: all;
+    background: var(--figma-color-bg-secondary);
+  }
+  /* A hyphen is a break opportunity, so "~/.figma-to-claude/app" splits after "to-" and
+     the command reads as though it's been corrupted. Each path is one token to a reader,
+     so keep it on one line; the longest is well inside the panel width. */
+  code.cmd .path { white-space: nowrap; }
+
+  /* the live "is it installed yet" row */
+  .watch {
+    display: flex; align-items: center; gap: 7px;
+    margin-top: 8px; padding: 8px 9px; border-radius: 5px;
+    background: var(--figma-color-bg-secondary);
+  }
+  .watch .pip {
+    width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--figma-color-icon-warning);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: 0.25 } }
+
+  /* ---------- blocked ---------- */
+  #blocked-action { margin-bottom: 10px; }
+  #blocked-note {
+    color: var(--figma-color-text-danger); line-height: 1.45; margin-bottom: 10px;
+  }
+  #blocked-note:empty { display: none; }
+
+  /* ---------- success ---------- */
+  .done-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+  .check { display: flex; gap: 8px; margin-bottom: 7px; align-items: baseline; }
+  .check .mark { color: var(--figma-color-icon-success); font-weight: 600; flex: none; }
+
+  /* ---------- main ---------- */
+  /* The four indicators are the panel's chrome, not its content: pinned to the top edge
+     behind a hairline so the eye skips them once they're green, instead of reading them
+     as the first item of the task. */
+  .rail {
+    margin: var(--bleed) var(--bleed) var(--pad); padding: 12px var(--pad);
+    border-bottom: 1px solid var(--figma-color-border);
+    display: flex; flex-wrap: wrap; gap: 12px; font-size: 10px;
+  }
+  /* Longhand deliberately: a `margin` shorthand here also writes margin-top, which lands
+     later in this sheet than .foot and quietly cancelled the `auto` that does the pushing,
+     with nothing failing anywhere. The top margin belongs to .foot alone. */
+  .actionbar { padding-top: 2px; }
+  .dots { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; font-size: 10px; }
+  .dot { display: flex; align-items: center; gap: 5px; color: var(--figma-color-text-secondary); }
+  .dot i {
+    width: 6px; height: 6px; border-radius: 50%; flex: none;
+    background: var(--figma-color-icon-danger);
+  }
+  .dot.on i { background: var(--figma-color-icon-success); }
+
+  /* Sized to its text and no more. Letting it absorb the panel's slack meant a docked
+     window rendered a 600px box whose entire content was a frame name — the size implied
+     a preview that was never coming. Slack belongs to the list below, which has something
+     to do with it. */
+  .card {
+    flex: none;
+    border: 1px solid var(--figma-color-border);
+    border-radius: 8px; padding: 12px; margin-bottom: 14px;
+  }
+  /* Nothing selected is the panel's resting state, not an error — a dashed edge reads as a
+     slot waiting to be filled, where a solid one reads as something already there. */
+  .card.empty {
+    border-style: dashed;
+    background: var(--figma-color-bg-secondary);
+    text-align: center;
+  }
+  /* ---------- settings ---------- */
+  /* Sized to Figma's own window chrome rather than to the status text beside it — at 12px
+     it read as punctuation after the dots instead of as the control it is. */
+  .icon-btn {
+    width: 24px; height: 24px; margin-left: auto; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: none; border: none; border-radius: 5px; cursor: pointer;
+    font-size: 16px; line-height: 1; color: var(--figma-color-text-secondary);
+  }
+  .icon-btn:hover { color: var(--figma-color-text); background: var(--figma-color-bg-secondary); }
+  .settings-rail {
+    align-items: center; gap: 6px; margin-bottom: 16px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--figma-color-border);
+  }
+  .settings-rail .icon-btn { margin-left: 0; }
+  .rail-title { font-size: 13px; font-weight: 600; color: var(--figma-color-text); }
+
+  /* The one scrolling region on this screen. Same min-height: 0 rule as the screen list —
+     without it the sections set the floor and the whole view overflows the window. */
+  .scrollable { flex: 1; min-height: 0; overflow-y: auto; }
+
+  .hero { margin-bottom: 22px; }
+  .hero-title { font-size: 15px; font-weight: 600; line-height: 1.3; margin-bottom: 5px; }
+  .hero-sub { margin: 0; line-height: 1.55; color: var(--figma-color-text-secondary); }
+
+  .sec { margin-bottom: 22px; }
+  .sec:last-child { margin-bottom: 0; }
+  .sec h2 {
+    margin: 0 0 4px; padding-bottom: 6px;
+    border-bottom: 1px solid var(--figma-color-border);
+    font-size: 9px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--figma-color-text-tertiary, var(--figma-color-text-secondary));
+  }
+  .sec p { margin: 0; line-height: 1.55; color: var(--figma-color-text); }
+  .note { margin-top: 6px !important; color: var(--figma-color-text-secondary) !important; }
+  /* inline-block, not the inline the base style sets: vertical margin does nothing on an
+     inline box, so this sat flush against the paragraph above it. */
+  .sec .linky { display: inline-block; margin-top: 8px; }
+  .sec .bad:not(:empty) { margin-top: 6px; }
+  .steps { margin: 8px 0 0; padding-left: 18px; }
+  .steps li { margin-bottom: 7px; line-height: 1.5; }
+  .steps li:last-child { margin-bottom: 0; }
+
+  /* One shape for every label-and-value line on this screen, so the default folder, the
+     support handle and the connection states all sit on the same right edge. */
+  .row { display: flex; align-items: baseline; gap: 10px; padding: 8px 0 0; }
+  .row-label { color: var(--figma-color-text-secondary); }
+  .row-value { margin-left: auto; font-weight: 500; text-align: right; word-break: break-all; }
+  .row .linky { margin-left: auto; margin-top: 0; }
+
+  .conns { list-style: none; margin: 0; padding: 0; }
+  .conns li {
+    display: flex; align-items: baseline; gap: 8px;
+    padding: 8px 0; border-bottom: 1px solid var(--figma-color-border);
+  }
+  .conns li:last-child { border-bottom: none; }
+  .conns i {
+    width: 7px; height: 7px; border-radius: 50%; flex: none;
+    transform: translateY(-1px);
+    background: var(--figma-color-icon-danger);
+  }
+  .conns li.on i { background: var(--figma-color-icon-success); }
+  .conns .what { font-weight: 500; }
+  .conns .state { margin-left: auto; color: var(--figma-color-text-secondary); font-size: 10px; text-align: right; }
+
+  .vers { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; }
+  .vers dt { color: var(--figma-color-text-secondary); }
+  .vers dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* Sized by the selection, not by the window. Nothing in the panel stretches to fill a
+     docked window's slack any more: a box that grows without more to put in it reads as
+     something still loading, and both attempts at filling it — a stretched card, then a
+     frame render — were removed for that. The leftover collects below the send button
+     instead, where it says nothing and claims nothing. */
+  .screens { display: flex; flex-direction: column; min-height: 0; margin-bottom: 14px; }
+  .screens-head {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;
+    font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+    font-weight: 600; color: var(--figma-color-text-secondary);
+  }
+  /* Neither part shrinks and neither wraps, which is the whole of what keeps this row on one
+     line: the count and the longest warning together sit well inside the panel width. The row
+     named the Figma page as well until a designer asked for the count alone — that name was
+     text of any length and had to be truncated to fit, which is machinery a count doesn't need
+     and shouldn't get back by accident. */
+  #screens-count { flex: none; }
+  .screens-head .warn {
+    flex: none; white-space: nowrap;
+    text-transform: none; letter-spacing: 0; font-weight: 400;
+  }
+  /* Grows a row at a time with the selection, then stops and scrolls. The ceiling is what
+     keeps a thirty-screen send from pushing the button out of the window; the absence of a
+     floor is what keeps a two-screen send from drawing a box mostly full of nothing.
+     `flex: 0 1 auto` with `min-height: 0` is the pair that does it — no growing into slack
+     the selection hasn't earned, but still able to give way when Figma hands the panel less
+     height than it asked for, which is the case where the send button leaves the window. */
+  .screens-list {
+    flex: 0 1 auto; min-height: 0; max-height: 246px; overflow-y: auto;
+    margin: 0; padding: 0 0 0 22px;
+    border: 1px solid var(--figma-color-border); border-radius: 8px;
+    padding-top: 8px; padding-bottom: 8px; padding-right: 10px;
+  }
+  .screens-list li { margin: 0 0 5px; line-height: 1.45; }
+  .screens-list li:last-child { margin-bottom: 0; }
+  .screens-list .sname {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .screens-list .ssize { color: var(--figma-color-text-secondary); font-size: 10px; }
+  .warn { color: var(--figma-color-text-warning, #b25e09); }
+
+  .frame-name {
+    font-size: 13px; font-weight: 600; line-height: 1.35; margin-bottom: 4px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card.empty .frame-name { color: var(--figma-color-text-secondary); font-weight: 500; }
+  .meta { color: var(--figma-color-text-secondary); font-size: 10px; line-height: 1.5; }
+
+  label {
+    display: block; font-weight: 600; margin-bottom: 6px;
+    font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--figma-color-text-secondary);
+  }
+  select, input[type=text] {
+    width: 100%; padding: 8px 9px; font-size: 11px; font-family: inherit;
+    border: 1px solid var(--figma-color-border); border-radius: 6px;
+    background: var(--figma-color-bg-secondary); color: var(--figma-color-text);
+  }
+  .field { margin-bottom: 14px; }
+  /* A control that lives inside a sentence, so it is sized and coloured like the sentence
+     rather than like the send button — the destination is a detail you change now and
+     then, and a second full-width button would read as a second thing to do. */
+  button.linky {
+    width: auto; display: inline; padding: 0; border: none; background: none;
+    font: inherit; font-weight: 600; cursor: pointer;
+    color: var(--figma-color-text-brand, var(--figma-color-bg-brand));
+    text-decoration: underline; text-underline-offset: 2px;
+  }
+  button.linky:disabled { opacity: 0.5; cursor: default; text-decoration: none; }
+  button.linky:not(:disabled):hover { filter: none; opacity: 0.75; }
+  .hint { color: var(--figma-color-text-secondary); font-size: 10px; margin-top: 6px; line-height: 1.5; }
+
+  .sign {
+    margin-top: 10px; text-align: center;
+    font-size: 10px; line-height: 1.55; color: var(--figma-color-text-secondary);
+  }
+  .sign .by { margin-top: 2px; opacity: 0.75; }
 
   #result {
     margin-top: 12px; padding: 9px; border-radius: 5px; font-size: 10px;
@@ -56,34 +308,118 @@
   #result.ok { display: block; background: var(--figma-color-bg-success-tertiary); }
   #result.bad { display: block; background: var(--figma-color-bg-danger-tertiary); }
   #paste-field { display: none; }
-
-  #install-help {
-    display: none; margin-top: 12px; padding: 10px; border-radius: 5px;
-    font-size: 10px; line-height: 1.5;
-    background: var(--figma-color-bg-warning-tertiary);
-  }
-  #install-help b { display: block; margin-bottom: 4px; }
-  #install-help code {
-    display: block; margin: 8px 0; padding: 7px; border-radius: 4px;
-    font-family: ui-monospace, Menlo, monospace; font-size: 9px; line-height: 1.4;
-    word-break: break-all; user-select: all;
-    background: var(--figma-color-bg); color: var(--figma-color-text);
-  }
-  /* Offscreen, but must stay focusable for execCommand("copy") to work. */
   #clipboard { position: absolute; left: -9999px; top: 0; opacity: 0; }
 </style>
 </head>
 <body>
-  <div class="dots">
+
+<!-- Shown until the first status arrives, so a returning user never flashes onboarding -->
+<div id="view-loading">
+  <div class="muted">Checking this Mac…</div>
+</div>
+
+<!-- ============ ONBOARDING ============ -->
+<div id="view-onboarding" class="hidden">
+  <div class="ob-title">One-time setup</div>
+  <div class="ob-sub">
+    Figma can't start programs on your Mac, so a small helper has to run here.
+    About a minute, and only ever once.
+  </div>
+
+  <div class="step">
+    <span class="num">1</span>
+    <div class="body">
+      <div class="t">Open Terminal</div>
+      <div class="d">Press <kbd>⌘</kbd> <kbd>Space</kbd>, type <b>Terminal</b>, press Enter.</div>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">2</span>
+    <div class="body">
+      <div class="t">Paste this in, press Enter</div>
+      <!-- Clone only when it isn't already there. A bare `git clone && install` is fatal
+           the second time — git refuses a non-empty directory, && short-circuits, and the
+           installer never runs. Several screens tell designers to re-run this, so the
+           second run has to be the working one. A clone that fails for a real reason still
+           stops here rather than running an installer that isn't on disk. -->
+      <code class="cmd" id="install-cmd">[ -d <span class="path">~/.figma-to-claude/app/.git</span> ] || git clone https://github.com/maljaburi/FigmaToClaude.git <span class="path">~/.figma-to-claude/app</span> &amp;&amp; <span class="path">~/.figma-to-claude/app/install.command</span></code>
+      <button id="copy-install">Copy command</button>
+    </div>
+  </div>
+
+  <div class="step">
+    <span class="num">3</span>
+    <div class="body">
+      <div class="t">Leave this panel open</div>
+      <div class="d">It notices by itself when the helper starts. Nothing else to click.</div>
+    </div>
+  </div>
+
+  <!-- The live indicator sits at the bottom edge rather than inside step 3: it reports the
+       panel's state for as long as this screen is up, which outlives the step it began in. -->
+  <div class="foot actionbar">
+    <div class="watch" style="margin-top:0">
+      <span class="pip"></span>
+      <span>Waiting for the helper…</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ BLOCKED: something other than the bridge ============ -->
+<div id="view-blocked" class="hidden">
+  <!-- The blocked screen names one problem at a time. Settings lists all four states at
+       once, which is the difference between "Claude Code isn't installed" and knowing
+       whether anything else is wrong too — so it has to be reachable from here. -->
+  <div class="rail">
+    <button type="button" class="icon-btn" id="open-settings-blocked" title="Settings, help and support" aria-label="Settings">⚙</button>
+  </div>
+  <div class="ob-title" id="blocked-title">Almost there</div>
+  <div class="ob-sub" id="blocked-body"></div>
+  <div id="blocked-note"></div>
+  <div class="foot actionbar">
+    <button id="blocked-action" class="hidden"></button>
+    <div class="watch" style="margin-top:0">
+      <span class="pip"></span>
+      <span id="blocked-watch-text">Waiting…</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SUCCESS ============ -->
+<div id="view-done" class="hidden">
+  <div class="done-title">You're set up</div>
+  <div id="done-checks"></div>
+  <div class="foot actionbar">
+    <div class="hint" style="margin:0 0 10px">
+      The helper starts automatically from now on. You won't see this screen again.
+    </div>
+    <button id="done-continue">Start using it</button>
+  </div>
+</div>
+
+<!-- ============ MAIN ============ -->
+<div id="view-main" class="hidden">
+  <div class="dots rail">
     <span class="dot" id="d-bridge"><i></i>Bridge</span>
     <span class="dot" id="d-claude"><i></i>Claude Code</span>
     <span class="dot" id="d-mcp"><i></i>Figma MCP</span>
-    <span class="dot" id="d-laws"><i></i><span id="laws-label">Laws</span></span>
+    <button type="button" class="icon-btn" id="open-settings" title="Settings, help and support" aria-label="Settings">⚙</button>
   </div>
 
-  <div class="card">
+  <div class="card empty" id="frame-card">
     <div class="frame-name" id="frame-name">Nothing selected</div>
-    <div class="meta" id="frame-meta">Click the frame or section on the canvas.</div>
+    <div class="meta" id="frame-meta">Click a frame or a section on the canvas.</div>
+  </div>
+
+  <!-- The screens the selection expands to. This is what a docked window's spare height is
+       for: one row when a frame is selected, a scrolling list when a section is. -->
+  <div class="screens hidden" id="screens">
+    <div class="screens-head">
+      <span id="screens-count"></span>
+      <span class="warn hidden" id="screens-warn"></span>
+    </div>
+    <ol class="screens-list" id="screens-list"></ol>
   </div>
 
   <div class="field" id="paste-field">
@@ -93,148 +429,363 @@
   </div>
 
   <div class="field">
-    <label for="target">Build into</label>
-    <select id="target"></select>
+    <label for="target" title="The folder on your Mac that Claude Code opens and builds in. Default makes one for you; Select Folder… lets you choose where it goes.">Build into</label>
+    <select id="target" title="The folder on your Mac that Claude Code opens and builds in. Default makes one for you; Select Folder… lets you choose where it goes."></select>
     <div class="hint" id="target-hint"></div>
   </div>
 
-  <button id="send" disabled>Send to Claude Code</button>
-  <div class="hint" id="effort-tip">
-    For best results, set the model to <b>Opus 5</b> at <b>Max</b> effort in Claude Code.
-    The project is pinned to Opus, but Max effort can only be set in the session.
+  <div class="foot actionbar">
+    <button id="send" disabled>Send to Claude Code</button>
+    <div class="sign">
+      <div>Use Opus 5 Max Effort for best results. Happy Claudinggg…</div>
+      <div class="by">Made with ❤️, Claude and Mustafa</div>
+    </div>
+    <div id="result"></div>
   </div>
-  <button class="ghost" id="connect" style="display:none">Connect Figma MCP</button>
+</div>
 
-  <div id="install-help">
-    <b>The bridge isn't running on this Mac.</b>
-    Figma can't launch anything locally, so a small helper has to run here. Copy this,
-    paste it into Terminal, press Enter. One time only.
-    <code id="install-cmd">git clone https://github.com/maljaburi/FigmaToClaude.git ~/.figma-to-claude/app && ~/.figma-to-claude/app/install.command</code>
-    <button class="ghost" id="copy-install">Copy install command</button>
+<!-- ============ SETTINGS ============ -->
+<div id="view-settings" class="hidden">
+  <div class="rail settings-rail">
+    <button type="button" class="icon-btn" id="close-settings" aria-label="Back">←</button>
+    <span class="rail-title">Settings</span>
   </div>
 
-  <div id="result"></div>
-  <textarea id="clipboard" aria-hidden="true"></textarea>
+  <div class="scrollable" id="settings-body">
+    <div class="hero">
+      <div class="hero-title">Send to Claude Code</div>
+      <p class="hero-sub">Turns the frames you select into a built screen. Measurements,
+         tokens and assets are read from the Figma file itself, never from a screenshot.</p>
+    </div>
+
+    <!-- First because it is the reason this screen gets opened: something isn't working and
+         the panel behind it can only name one cause at a time. -->
+    <section class="sec">
+      <h2>Status</h2>
+      <ul class="conns" id="conn-list"></ul>
+    </section>
+
+    <section class="sec">
+      <h2>Where builds go</h2>
+      <div class="row">
+        <span class="row-label">Default folder</span>
+        <span class="row-value" id="dir-path">…</span>
+      </div>
+      <p class="note">New folders are created here. Any single build can go elsewhere —
+         choose <b>Select Folder…</b> when you send it.</p>
+      <button type="button" class="linky" id="change-dir">Change</button>
+      <div class="bad" id="dir-note"></div>
+    </section>
+
+    <section class="sec">
+      <h2>How to use it</h2>
+      <ol class="steps">
+        <li>Select one or more frames on the canvas, or a section to send everything inside it.</li>
+        <li>Check the list of screens, and choose where it should build.</li>
+        <li>Press <b>Send to Claude Code</b>. Claude Code opens with the brief loaded.</li>
+        <li>Press Enter there to start the build. Nothing runs until you do.</li>
+      </ol>
+    </section>
+
+    <section class="sec">
+      <h2>Support</h2>
+      <div class="row">
+        <span class="row-label">Something broken, or an idea</span>
+        <button type="button" class="linky" id="support-link">@Mustafa</button>
+      </div>
+      <div class="bad" id="support-note"></div>
+    </section>
+
+    <section class="sec">
+      <h2>Version</h2>
+      <dl class="vers" id="version-list"></dl>
+    </section>
+  </div>
+</div>
+
+<textarea id="clipboard" aria-hidden="true"></textarea>
 
 <script>
-  var current = null;      // latest selection info
+  var current = null;
   var projects = [];
   var prototypesDir = null;
   var savedTarget = null;
   var needsPaste = false;
+  var sending = false;            // a build is in flight; the poll must not re-enable Send
+  var picking = false;            // the native folder dialog is open in front of someone
+  var picked = null;              // folder chosen through it; may sit outside the scan
+  var lastTargetValue = "__new__";
+  var settingsOpen = false;       // routing must not pull this screen away while it's read
+  var viewBeforeSettings = "main";
+  var about = { pluginVersion: "?", support: null };
+  var lastStatus = null;          // the settings screen re-renders from the newest poll
+  var choosingFolder = false;     // the native folder picker is open on the Mac
 
+  var sawSetupIncomplete = false; // did we ever see this Mac unready in this session?
+  var dismissedDone = false;      // has the user clicked through the success screen?
+  var lastView = null;
+  var blockedReason = null;       // which blocker the blocked view is currently showing
+  var blockedAction = null;
+
+  // The bridge deliberately exits and lets launchd relaunch it after a send that pulled
+  // new bridge code, so /status fails for a second or two. Reading that as "not
+  // installed" would drop a designer who has been using this for months back onto the
+  // install screen, then congratulate them for setting it up when it returns. Hold the
+  // current panel for a few polls instead — the Bridge dot already goes red meanwhile.
+  var BRIDGE_GRACE = 4; // ~8s at the 2s poll interval
+  var everSawBridge = false;
+  var bridgeMisses = 0;
+
+  function $(id) { return document.getElementById(id); }
   function post(msg) { parent.postMessage({ pluginMessage: msg }, "*"); }
 
-  function setDot(id, on) {
-    document.getElementById(id).className = on ? "dot on" : "dot";
+  // Only the width is a design decision — onboarding needs room for the command. The
+  // height is measured, because guessing it leaves dead space under short screens and
+  // clips the tall ones once a result message or the frame-link field appears.
+  var VIEW_WIDTH = { loading: 380, onboarding: 420, blocked: 380, done: 380, main: 380, settings: 380 };
+  var currentWidth = 380;
+
+  // Measured with the fill disabled. The views stretch to 100vh so their action bars sit
+  // at the bottom edge, which means the stretched body reports back the very height we're
+  // trying to replace — leaving the panel permanently stuck at its largest size.
+  function fitHeight() {
+    document.body.classList.add("measuring");
+    var h = Math.ceil(document.body.scrollHeight) + 2;
+    document.body.classList.remove("measuring");
+    post({ type: "resize", w: currentWidth, h: Math.max(120, Math.min(h, 900)) });
   }
 
-  function chosenTarget() {
-    var value = document.getElementById("target").value;
-    if (value === "__new__") return { mode: "new" };
-    return { mode: "existing", path: value };
+  function showView(name) {
+    if (name === lastView) return;
+    if (name !== "blocked") blockedReason = null;
+    lastView = name;
+    ["loading", "onboarding", "blocked", "done", "main", "settings"].forEach(function (v) {
+      $("view-" + v).classList.toggle("hidden", v !== name);
+    });
+    currentWidth = VIEW_WIDTH[name];
+    fitHeight();
   }
 
-  function refreshSendState() {
-    var haveFrame = current && !current.error;
-    var pasted = document.getElementById("pasted").value.trim();
-    // A send with no frame link can't read the design, so don't allow it.
-    var haveLink = (haveFrame && current.fileKey) || pasted;
-    document.getElementById("send").disabled = !(haveFrame && haveLink);
+  // Content changes height without the view changing: the result box appears, the
+  // frame-link field shows up, a long frame name or the target hint wraps. This is a
+  // backstop for anything not driven by a message or a click — a web font landing, the
+  // Figma theme switching. It is not the only path, because a browser is free to
+  // coalesce these callbacks and a panel that only sometimes fits its content is worse
+  // than one that measures a few times too often.
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(function () { if (lastView) fitHeight(); }).observe(document.body);
   }
 
-  function renderTargets() {
-    var select = document.getElementById("target");
-    var html = '<option value="__new__">New prototype</option>';
-    for (var i = 0; i < projects.length; i++) {
-      html += '<option value="' + projects[i].path + '">' + projects[i].name + "</option>";
+  function setDot(id, on) { $(id).className = on ? "dot on" : "dot"; }
+
+  // Rendered only when the blocker itself changes, not on every poll — otherwise a
+  // two-second tick would keep wiping an error the designer is still reading and
+  // re-enable the button underneath their click.
+  function showBlocked(reason, title, body, watching, action) {
+    if (reason !== blockedReason) {
+      blockedReason = reason;
+      blockedAction = action || null;
+      $("blocked-title").textContent = title;
+      $("blocked-body").innerHTML = body;
+      $("blocked-watch-text").textContent = watching;
+      $("blocked-note").textContent = "";
+      $("blocked-action").classList.toggle("hidden", !action);
+      $("blocked-action").disabled = false;
+      if (action) $("blocked-action").textContent = action.label;
     }
-    select.innerHTML = html;
-
-    if (savedTarget && savedTarget.mode === "existing" && savedTarget.path) {
-      select.value = savedTarget.path;
-      if (select.value !== savedTarget.path) select.value = "__new__"; // project went away
-    } else {
-      select.value = "__new__";
-    }
-    renderTargetHint();
+    showView("blocked");
   }
 
-  function renderTargetHint() {
-    var hint = document.getElementById("target-hint");
-    if (document.getElementById("target").value === "__new__") {
-      hint.textContent = prototypesDir ? "A new folder in " + prototypesDir : "A new folder for this frame.";
-    } else {
-      hint.textContent = "Added as a new screen in this project.";
-    }
+  // The three connections a designer can act on, and nothing about the standards: they are
+  // either loaded or the send is refused outright, so a green line here reported something
+  // nobody could do anything with. Settings and the blocked screen carry them instead.
+  function renderDoneChecks(status) {
+    var rows = [
+      ["Helper installed and running", true],
+      ["Claude Code found on this Mac", !!status.claudeApp],
+      ["Figma connected to Claude Code", status.figmaMcpState === "connected"]
+    ];
+    var host = $("done-checks");
+    host.textContent = "";
+    rows.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "check";
+      var mark = document.createElement("span");
+      mark.className = "mark";
+      mark.textContent = r[1] ? "✓" : "–";
+      var label = document.createElement("span");
+      label.textContent = r[0];
+      row.appendChild(mark);
+      row.appendChild(label);
+      host.appendChild(row);
+    });
   }
 
-  function show(ok, message) {
-    var el = document.getElementById("result");
-    el.className = ok ? "ok" : "bad";
-    el.textContent = message;
+  // showBlocked takes markup so its callers can bold a command name. Every call site is
+  // a literal today; this is here so the one value that comes off the wire stays safe.
+  function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+
+  // Decide which screen this Mac should be looking at.
+  function route(status) {
+    // Settings is opened deliberately and closed deliberately. Routing runs on every
+    // status poll, so without this the screen would be yanked away two seconds after it
+    // was opened — and the connection list on it is precisely what someone reading it in
+    // a broken state came to see.
+    if (settingsOpen) return;
+    if (!status.bridge) {
+      bridgeMisses++;
+      if (everSawBridge && bridgeMisses < BRIDGE_GRACE) return;
+      sawSetupIncomplete = true;
+      return showView("onboarding");
+    }
+    everSawBridge = true;
+    bridgeMisses = 0;
+    var ready = status.claudeApp && status.claudeCli &&
+                status.figmaMcpState === "connected" && status.laws && status.laws.ok;
+    if (!ready) sawSetupIncomplete = true;
+
+    // Bridge is up. Anything still missing gets its own instruction rather than a red dot.
+    if (!status.claudeApp) {
+      return showBlocked("claude-app", "Claude Code isn't installed",
+        "Sending a frame opens the Claude Code desktop app, so it needs to be on this Mac first. Install it, then come back — this panel updates by itself.",
+        "Waiting for Claude Code…");
+    }
+    if (!status.claudeCli) {
+      return showBlocked("claude-cli", "Finishing Claude Code setup",
+        "The <b>claude</b> command line tool isn't on this Mac yet. Open Claude Code once and let it finish setting up, then come back.",
+        "Waiting…");
+    }
+    // Registered and authorized are different failures with different fixes. Sending
+    // someone to /mcp to approve a server that was never registered has them hunting
+    // for a prompt that isn't there, so offer the registration itself instead.
+    if (status.figmaMcpState === "missing") {
+      return showBlocked("mcp-missing", "Connect Figma to Claude Code",
+        "Claude Code doesn't know about Figma yet, so a build would have nothing to read the design from. The helper usually wires this up on its own.",
+        "Waiting…",
+        { label: "Connect Figma", pending: "Connecting…", message: "setup" });
+    }
+    if (status.figmaMcpState !== "connected") {
+      return showBlocked("mcp-auth", "One last approval",
+        "Claude Code needs permission to read your Figma files. Open Claude Code, type <b>/mcp</b>, and approve Figma in the browser. One time only.",
+        "Waiting for Figma approval…");
+    }
+    if (!status.laws || !status.laws.ok) {
+      // Name the file that's missing. The bridge has always sent it and the panel has
+      // always dropped it, which turned "which standard?" into a log-reading exercise.
+      var missing = status.laws && status.laws.missing;
+      return showBlocked("laws", "Design standards missing",
+        (missing ? "<b>" + escapeHtml(missing) + "</b> couldn't be loaded, so sending is blocked"
+                 : "The implementation laws couldn't be loaded, so sending is blocked") +
+        " — a build without them would guess at values. Re-run the install command, or ask whoever set this up.",
+        "Waiting…");
+    }
+
+    // Everything is ready. Only celebrate if they actually watched it happen.
+    if (sawSetupIncomplete && !dismissedDone) {
+      renderDoneChecks(status);
+      return showView("done");
+    }
+    return showView("main");
   }
 
   onmessage = function (event) {
     var msg = event.data.pluginMessage;
     if (!msg) return;
+    handle(msg);
+    // Any branch below can change the height — the project list arrives and its hint
+    // wraps to two lines, a long frame name wraps, the result box opens. Measure here
+    // rather than waiting for the observer to notice.
+    if (lastView) fitHeight();
+  };
 
+  // A selection of one is already fully described by the card above, so the list only
+  // appears once there is more than one — otherwise every send grows a redundant list of
+  // one item, and the card and the list say the same thing twice.
+  //
+  // The card keeps showing the first screen so the panel doesn't reflow as the selection
+  // grows, and `typedName` is preserved across re-renders because the 1.5s selection poll
+  // re-enters here while the designer is mid-word.
+  function renderScreens(info) {
+    var screens = info.screens || [];
+    var many = !info.error && screens.length > 1;
+
+    $("screens").className = many ? "screens" : "screens hidden";
+    // The card and the list would otherwise both lead with screen one, and in a docked
+    // panel that duplicate row costs the list about a third of the height it has to show
+    // twelve names in.
+    $("frame-card").style.display = many ? "none" : "";
+    if (!many) return;
+
+    $("screens-count").textContent = screens.length + " screens";
+
+    var warn = $("screens-warn");
+    if (info.tooMany) {
+      warn.textContent = "too many to send — " + info.tooMany + " is the limit";
+      warn.className = "warn";
+    } else if (info.warn) {
+      warn.textContent = "that's a lot for one build";
+      warn.className = "warn";
+    } else {
+      warn.className = "warn hidden";
+    }
+
+    var list = $("screens-list");
+    list.textContent = "";
+    for (var i = 0; i < screens.length; i++) {
+      var s = screens[i];
+      var li = document.createElement("li");
+      var nameEl = document.createElement("div");
+      nameEl.className = "sname";
+      // textContent, never innerHTML: these are Figma layer names, which are arbitrary
+      // text a designer typed and can contain markup.
+      nameEl.textContent = s.name;
+      var sizeEl = document.createElement("div");
+      sizeEl.className = "ssize";
+      sizeEl.textContent = (s.type || "frame").toLowerCase() + " · " + s.width + "x" + s.height;
+      li.appendChild(nameEl);
+      li.appendChild(sizeEl);
+      list.appendChild(li);
+    }
+  }
+
+  function handle(msg) {
     if (msg.type === "selection") {
       var info = msg.info || {};
       current = info;
-      var name = document.getElementById("frame-name");
-      var meta = document.getElementById("frame-meta");
       if (info.error) {
-        name.textContent = "Nothing selected";
-        name.className = "frame-name empty";
-        meta.textContent = info.error;
+        $("frame-card").className = "card empty";
+        $("frame-name").textContent = "Nothing selected";
+        $("frame-name").className = "frame-name";
+        $("frame-meta").textContent = info.error;
       } else {
-        name.textContent = info.name;
-        name.className = "frame-name";
-        meta.textContent = info.type.toLowerCase() + " · " + info.width + "x" + info.height + " · " + info.page;
-        // Without a file key there's no link for Claude Code to read the design from,
-        // so ask for one rather than sending a build that can only guess.
+        $("frame-card").className = "card";
+        $("frame-name").textContent = info.name;
+        $("frame-name").className = "frame-name";
+        $("frame-meta").textContent = info.type.toLowerCase() + " · " + info.width + "x" + info.height + " · " + info.page;
         needsPaste = !info.fileKey;
-        document.getElementById("paste-field").style.display = needsPaste ? "block" : "none";
+        $("paste-field").style.display = needsPaste ? "block" : "none";
       }
+      renderScreens(info);
       refreshSendState();
       return;
     }
 
     if (msg.type === "status") {
+      lastStatus = msg;
+      if (settingsOpen) renderSettings();
       setDot("d-bridge", !!msg.bridge);
       setDot("d-claude", !!msg.claude);
       setDot("d-mcp", !!msg.figmaMcp);
-
-      // The bridge connects the Figma MCP on startup, so this button is only for the
-      // rare case where that failed. Hide it when there's nothing to fix.
-      document.getElementById("connect").style.display = msg.figmaMcp ? "none" : "block";
-
-      var laws = msg.laws || { ok: false };
-      setDot("d-laws", !!laws.ok);
-      // Show the version so a stale copy is visible instead of invisible.
-      document.getElementById("laws-label").textContent = laws.ok ? "Laws " + laws.version : "Laws";
-
-      // The install instructions replace the error text when the bridge is missing —
-      // a designer who has never installed it needs the command, not a diagnosis.
-      document.getElementById("install-help").style.display = msg.bridge ? "none" : "block";
-
-      // Report the first thing that's actually blocking, in the order it blocks.
-      if (!msg.bridge) {
-        document.getElementById("result").className = "";
-      } else if (!msg.claudeApp) {
-        show(false, "Claude Code desktop isn't installed on this Mac. Sending opens it, so install it first.");
-      } else if (!msg.claudeCli) {
-        show(false, "The claude command line tool isn't on PATH. The bridge needs it to connect the Figma MCP.");
-      } else if (msg.figmaMcpState === "needs-auth") {
-        show(false, "Figma is connected but not authorized yet. Run /mcp in Claude Code and approve Figma in your browser. One time only.");
-      } else if (msg.figmaMcpState === "missing") {
-        show(false, "The Figma MCP isn't set up. Click Connect Figma MCP below.");
-      } else if (!laws.ok) {
-        show(false, "The implementation laws can't be loaded, so sending is blocked. A build without them would guess at values.");
-      } else {
-        document.getElementById("result").className = "";
-      }
+      // No dot for the standards. They are either loaded or the panel refuses to send at
+      // all, so a green light said nothing a designer could act on and a red one duplicated
+      // the screen that already stops them. Their state lives on the settings screen, where
+      // someone is looking for it, and `route()` still reads `msg.laws` to get them there.
+      route(msg);
       return;
     }
 
@@ -246,35 +797,350 @@
       return;
     }
 
-    if (msg.type === "result") {
-      show(msg.ok, msg.message);
-      document.getElementById("send").disabled = false;
-      document.getElementById("send").textContent = "Send to Claude Code";
+    if (msg.type === "about") {
+      about = { pluginVersion: msg.pluginVersion || "?", support: msg.support || null };
+      if (about.support && about.support.name) $("support-link").textContent = about.support.name;
+      // Nothing guarantees this lands before the screen it feeds is opened, and a settings
+      // screen rendered a moment early would show its own placeholder for the plugin
+      // version — the one number someone is on that screen to read.
+      if (settingsOpen) renderSettings();
       return;
     }
+
+    if (msg.type === "targetChosen") {
+      picking = false;
+      refreshSendState();
+      if (msg.cancelled) return revertTarget();
+      if (!msg.ok) {
+        showError(msg.message || "That folder couldn't be used.");
+        return revertTarget();
+      }
+      // Folders reached through the picker can live anywhere, so they are not in the scan
+      // and would vanish from the dropdown on the next refresh. Holding it here keeps it
+      // selectable, and it is what "the last folder you used" then points at.
+      picked = { id: msg.id, name: msg.name, path: msg.path };
+      renderTargets();
+      $("target").value = msg.id;
+      renderTargetHint();
+      fitHeight();
+      return;
+    }
+
+    if (msg.type === "folderChosen") {
+      choosingFolder = false;
+      if (msg.ok && msg.prototypesDir) prototypesDir = msg.prototypesDir;
+      // The dropdown names the location in one of its options, so it is as out of date as
+      // the settings screen that changed it.
+      renderTargets();
+      renderSettings();
+      // Cancelling is a decision, not a failure, so it leaves no message behind. A real
+      // failure has to say something, or the button just springs back and looks broken.
+      $("dir-note").textContent =
+        !msg.ok && !msg.cancelled ? (msg.message || "Couldn't change the folder.") :
+        msg.ok && msg.message ? msg.message : "";
+      return;
+    }
+
+    // Only ever says anything when nothing opened. A designer watching Slack come to the
+    // front does not also need the panel to tell them Slack came to the front.
+    if (msg.type === "supportOpened") {
+      $("support-note").textContent = msg.ok ? "" :
+        "Couldn't open Slack. Message " + ((about.support && about.support.name) || "support") +
+        " at " + (msg.url || "");
+      fitHeight();
+      return;
+    }
+
+    // Whether the window actually took the height it was given. Kept out of the panel's
+    // face — it means nothing to a designer — but a hover answers the one question the
+    // layout can't: is this window ours to size, or is Figma holding it open.
+    if (msg.type === "resized") {
+      var sign = document.getElementsByClassName("sign")[0];
+      if (sign) {
+        sign.title = msg.error
+          ? "Panel asked for " + msg.asked + "px and Figma refused: " + msg.error
+          : "Panel asked for " + msg.asked + "px; window is " + window.innerHeight + "px" +
+            (window.innerHeight > msg.asked + 8 ? " — Figma is holding this height" : "");
+      }
+      return;
+    }
+
+    if (msg.type === "result") {
+      // A blocked-screen action has to answer on the blocked screen; #result lives in
+      // the working panel, which nobody in this state is looking at.
+      if (lastView === "blocked") {
+        $("blocked-action").disabled = false;
+        if (blockedAction) $("blocked-action").textContent = blockedAction.label;
+        // On success, say nothing — the next status poll moves the panel on by itself.
+        $("blocked-note").textContent = msg.ok ? "" : msg.message;
+        return;
+      }
+      // A success says nothing: Claude Code coming to the front is the confirmation, and a
+      // banner repeating it just sits in the panel until the next send. A failure still has
+      // to speak — otherwise the button springs back to its old label and nothing explains
+      // why nothing happened.
+      var el = $("result");
+      el.className = msg.ok ? "" : "bad";
+      el.textContent = msg.ok ? "" : msg.message;
+      sending = false;
+      $("send").textContent = "Send to Claude Code";
+      refreshSendState();
+      return;
+    }
+  }
+
+  // `sending` is checked here, not just in the click handler: the selection poll calls
+  // this on its own schedule, and without the guard it re-enabled the button a second
+  // or two into a build while the label still read "Sending…".
+  function refreshSendState() {
+    var haveFrame = current && !current.error;
+    var pasted = $("pasted").value.trim();
+    var haveLink = (haveFrame && current.fileKey) || pasted;
+    // Over the cap the button goes dead rather than letting the send fail at the bridge:
+    // the count and the limit are both on screen here, and a rejection 20 seconds later
+    // is a worse way to learn the same thing.
+    var tooMany = haveFrame && !!current.tooMany;
+    $("send").disabled = sending || picking || tooMany || !(haveFrame && haveLink);
+  }
+
+  // Built with DOM calls, not innerHTML. These names come from readdirSync on the
+  // designer's own directories, so a folder named with a quote and a tag used to break
+  // out of the value attribute and inject markup into this iframe.
+  function renderTargets() {
+    var select = $("target");
+    var keep = select.value;
+    select.textContent = "";
+    // Two ways in, then wherever you have been. The list used to be every folder in the
+    // home directory, which put Library, Movies and node_modules in a menu of places to
+    // build a prototype and buried the one folder that was wanted.
+    select.appendChild(new Option("Default", "__new__"));
+    select.appendChild(new Option("Select Folder…", "__pick__"));
+
+    // Absent on a first send rather than empty. A "Recent" heading with nothing under it
+    // is a list that looks broken, where no heading at all is simply a panel with less on.
+    var group = document.createElement("optgroup");
+    group.label = "Recent";
+    var seen = {};
+    if (picked) { group.appendChild(new Option(picked.name, picked.id)); seen[picked.id] = true; }
+    for (var i = 0; i < projects.length; i++) {
+      if (seen[projects[i].id]) continue;
+      group.appendChild(new Option(projects[i].name, projects[i].id));
+    }
+    if (group.children.length) select.appendChild(group);
+    // A poll must not undo a choice made half a second ago, so a live selection wins over
+    // the remembered one. Both fall back to Default when the folder has dropped off recents
+    // — an id that no longer resolves would otherwise fail at the far end of Send.
+    var want = keep && keep !== "__pick__" ? keep
+             : savedTarget && savedTarget.mode === "existing" && savedTarget.id ? savedTarget.id
+             : "__new__";
+    select.value = want;
+    if (select.value !== want) select.value = "__new__";
+    renderTargetHint();
+  }
+
+  // Selecting "New folder…" is the request itself — there is nothing to confirm, and the
+  // dialog that opens is the one macOS already gives everything else, New Folder button
+  // and inline renaming included. The selection reverts if they close it without choosing.
+  function pickTarget() {
+    picking = true;
+    lastTargetValue = $("target").value;
+    refreshSendState();
+    renderTargetHint();
+    fitHeight();
+    post({ type: "chooseTarget" });
+  }
+
+  function revertTarget() {
+    $("target").value = picked ? picked.id : (lastTargetValue || "__new__");
+    if ($("target").value === "__pick__") $("target").value = "__new__";
+    renderTargetHint();
+    fitHeight();
+  }
+
+  function showError(text) {
+    var el = $("result");
+    el.className = "bad";
+    el.textContent = text;
+    fitHeight();
+  }
+
+  // Says what the chosen option is about to do, and nothing else. It used to carry the
+  // control for changing the default location too, which put a second, unrelated decision
+  // inside a line describing the first — that setting now lives on the settings screen.
+  // Paths are written out in full. `~` is shell notation, and a designer who has to ask
+  // what it stands for can't use the line to check the build is going where they meant.
+  function renderTargetHint() {
+    var value = $("target").value;
+    $("target-hint").textContent =
+      picking ? "Pick or create a folder in the window that just opened." :
+      picked && value === picked.id ? "Builds in " + picked.path + "." :
+      value === "__new__"
+        // Nothing to name until the bridge answers, and naming a location it hasn't sent
+        // yet would be a guess at the one line someone reads to check where their work goes.
+        ? (prototypesDir ? "Default location is " + prototypesDir + "." : "Builds in the default location.")
+        // Why the folder is on the list, not what is in it. This read "Adds these screens to
+        // what is already there", which the panel had no way to know: `/projects` carries an
+        // id and a name per folder and deliberately no listing, so a folder whose earlier
+        // build produced nothing, or that was emptied in Finder afterwards, was described as
+        // holding work it didn't have. Having been sent to is the part that stays true.
+        : "Builds in a folder you've used before.";
+  }
+
+  $("copy-install").onclick = function () {
+    var button = this;
+    var text = $("install-cmd").textContent.trim();
+    var report = function (ok) {
+      button.textContent = ok ? "Copied — now paste it in Terminal" : "Select the text above and press ⌘C";
+      fitHeight();
+    };
+
+    // execCommand("copy") is deprecated but is still the only thing that works in this
+    // iframe: the async Clipboard API needs a secure context and permission the plugin
+    // sandbox doesn't grant. Try it first anyway, so this keeps working when execCommand
+    // is finally removed.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { report(true); }, function () { report(legacyCopy(text)); });
+      return;
+    }
+    report(legacyCopy(text));
   };
 
-  document.getElementById("send").onclick = function () {
-    var pasted = document.getElementById("pasted").value.trim();
+  function legacyCopy(text) {
+    var box = $("clipboard");
+    box.value = text;
+    box.select();
+    try { return document.execCommand("copy"); } catch (e) { return false; }
+  }
+
+  $("blocked-action").onclick = function () {
+    if (!blockedAction) return;
+    this.disabled = true;
+    this.textContent = blockedAction.pending;
+    post({ type: blockedAction.message });
+    fitHeight();
+  };
+
+  $("done-continue").onclick = function () { dismissedDone = true; showView("main"); };
+
+  $("send").onclick = function () {
+    if (sending) return;
+    var pasted = $("pasted").value.trim();
+    sending = true;
     this.disabled = true;
     this.textContent = "Sending…";
     post({ type: "build", target: chosenTarget(), pastedUrl: needsPaste && pasted ? pasted : null });
+    fitHeight();
   };
 
-  document.getElementById("copy-install").onclick = function () {
-    // navigator.clipboard is unavailable in the plugin iframe, so use the old path.
-    var box = document.getElementById("clipboard");
-    box.value = document.getElementById("install-cmd").textContent.trim();
-    box.select();
-    var ok = false;
-    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
-    this.textContent = ok ? "Copied — paste it in Terminal" : "Press ⌘C to copy";
-    if (!ok) { document.getElementById("install-cmd").focus(); }
+  // No name to carry: an existing folder is already named, and a new one is named after
+  // the first screen by the bridge. Anyone who wants to choose the name picks New folder…
+  // and types it into the macOS dialog, which is better at it than a text field here.
+  function chosenTarget() {
+    var v = $("target").value;
+    return v === "__new__" ? { mode: "new" } : { mode: "existing", id: v };
+  }
+
+  // The hint under the dropdown is one line for a project and two for a long prototypes
+  // path, so the panel has to be re-measured when it changes.
+  $("target").onchange = function () {
+    if (this.value === "__pick__") return pickTarget();
+    renderTargetHint();
+    fitHeight();
   };
 
-  document.getElementById("connect").onclick = function () { post({ type: "setup" }); };
-  document.getElementById("target").onchange = renderTargetHint;
-  document.getElementById("pasted").oninput = refreshSendState;
+  function openSettings() {
+    viewBeforeSettings = lastView === "settings" ? "main" : lastView;
+    settingsOpen = true;
+    renderSettings();
+    showView("settings");
+  }
+  $("open-settings").onclick = openSettings;
+  $("open-settings-blocked").onclick = openSettings;
+
+  $("close-settings").onclick = function () {
+    settingsOpen = false;
+    // Routing has been suppressed the whole time this was open, so the panel goes back to
+    // where it was and the next poll — a second away at most — corrects it if that moved.
+    showView(viewBeforeSettings || "main");
+  };
+
+  $("change-dir").onclick = function () {
+    choosingFolder = true;
+    renderSettings();
+    post({ type: "chooseFolder" });
+  };
+
+  // Unconditional: it used to require about.support, so a click before that message landed
+  // did nothing at all, and nothing said so.
+  $("support-link").onclick = function () {
+    $("support-note").textContent = "";
+    post({ type: "openSupport" });
+  };
+
+  // Names a state, never a cause: "Claude Code isn't running" is something a designer can
+  // act on, where the reason it isn't is a support conversation, not a label.
+  var CONNECTIONS = [
+    { what: "Bridge", on: "Running on this Mac", off: "Not running — reopen the plugin, or reinstall",
+      test: function (s) { return !!s.bridge; } },
+    { what: "Claude Code", on: "App and command line found", off: "Install Claude Code, then sign in",
+      test: function (s) { return !!s.claudeApp && !!s.claudeCli; } },
+    { what: "Figma MCP", on: "Connected — designs read from the file",
+      off: "Not connected — Claude Code can't read the design",
+      test: function (s) { return s.figmaMcpState === "connected"; } },
+    { what: "Design standards", on: "Loaded", off: "Couldn't be loaded",
+      test: function (s) { return !!(s.laws && s.laws.ok); } },
+  ];
+
+  function renderSettings() {
+    var status = lastStatus || {};
+
+    $("dir-path").textContent = prototypesDir || "the default location";
+    $("change-dir").textContent = choosingFolder ? "Choosing…" : "Change";
+    $("change-dir").disabled = choosingFolder;
+
+    var list = $("conn-list");
+    list.textContent = "";
+    for (var i = 0; i < CONNECTIONS.length; i++) {
+      var conn = CONNECTIONS[i];
+      var ok = !!conn.test(status);
+      var li = document.createElement("li");
+      if (ok) li.className = "on";
+      li.appendChild(document.createElement("i"));
+      var what = document.createElement("span");
+      what.className = "what";
+      what.textContent = conn.what;
+      li.appendChild(what);
+      var state = document.createElement("span");
+      state.className = "state";
+      state.textContent = ok ? conn.on : conn.off;
+      li.appendChild(state);
+      list.appendChild(li);
+    }
+
+    var laws = status.laws || {};
+    var rows = [
+      ["Plugin", about.pluginVersion],
+      ["Bridge", status.version || "—"],
+      ["Standards", laws.ok && laws.version ? laws.version : "—"],
+      ["Node", status.node || "—"],
+    ];
+    // Only when this Mac isn't following the same updates as everyone else's. On the
+    // machines that are — nearly all of them — naming the channel is a word about release
+    // engineering on a screen a designer opened because a send didn't work.
+    if (status.channel && status.channel !== "release") rows.push(["Channel", status.channel]);
+    var vers = $("version-list");
+    vers.textContent = "";
+    for (var j = 0; j < rows.length; j++) {
+      var dt = document.createElement("dt");
+      dt.textContent = rows[j][0];
+      var dd = document.createElement("dd");
+      dd.textContent = rows[j][1];
+      vers.appendChild(dt);
+      vers.appendChild(dd);
+    }
+    fitHeight();
+  }
+  $("pasted").oninput = refreshSendState;
 
   post({ type: "init" });
 </script>

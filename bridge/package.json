@@ -4,5 +4,9 @@
   "private": true,
   "description": "Local bridge that launches Claude Code from the Send-to-Claude-Code Figma plugin.",
   "bin": { "figma-claude-bridge": "server.js" },
-  "scripts": { "start": "node server.js" }
+  "engines": { "node": ">=18.17.0" },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test server.test.js"
+  }
 }

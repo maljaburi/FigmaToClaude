@@ -1,0 +1,12 @@
+{
+  "name": "figma-to-claude-code",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Figma plugin + local bridge that sends a selected frame to Claude Code desktop.",
+  "engines": { "node": ">=18.17.0" },
+  "scripts": {
+    "test": "node --test bridge/server.test.js",
+    "preview": "node preview/run.js",
+    "verify": "npm test && npm run preview"
+  }
+}

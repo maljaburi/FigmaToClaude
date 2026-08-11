@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Send to Claude Code — every screen</title>
+<style>
+  body { margin: 0; padding: 20px; background: #f4f4f5; font: 12px -apple-system, sans-serif; }
+  .row { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .cell { background: #fff; border-radius: 10px; padding: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.14); }
+  .cap { font-weight: 600; margin-bottom: 8px; color: #18181b; }
+  iframe { border: 1px solid #e4e4e7; border-radius: 6px; display: block; background: #fff; }
+  /* Probes exercise behaviour a still image can't show, so they stay off the picture. */
+  #probes { position: absolute; left: -9999px; top: 0; }
+  #report { margin-top: 20px; white-space: pre-wrap; font: 11px ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+
+<div class="row" id="row"></div>
+<div id="probes"></div>
+<pre id="report">running…</pre>
+
+<script>
+// The plugin talks to Figma over postMessage and nothing else, so this page can stand in
+// for Figma exactly: it answers the plugin's init, feeds it statuses, and resizes the
+// iframe when asked. The plugin is loaded unmodified.
+
+var LAWS = { ok: true, version: "a029352", source: "local" };
+var READY = {
+  type: "status", bridge: true, laws: LAWS, claudeApp: true, claudeCli: true,
+  claude: true, figmaMcp: true, figmaMcpState: "connected",
+  pinned: { model: "opus", effort: "xhigh" },
+  version: "1.0.0", node: "v24.18.1",
+  // What nearly every machine reports, and the case where naming it would be noise.
+  channel: "release"
+};
+function status(over) { return Object.assign({}, READY, over || {}); }
+
+var ONE_SCREEN = {
+  name: "Checkout / Payment method", type: "FRAME", nodeId: "12:345", urlNodeId: "12-345",
+  fileKey: "abc123", url: "https://figma.com/design/abc123/x?node-id=12-345&m=dev",
+  width: 390, height: 844
+};
+var SELECTION = {
+  type: "selection",
+  info: Object.assign({}, ONE_SCREEN, {
+    screens: [ONE_SCREEN], page: "Flows", file: "Design System"
+  })
+};
+
+// What a section expands to. The plugin sends the first screen's fields on the envelope as
+// well as the list, so this mirrors that shape rather than a tidier invented one.
+function manyScreens(n) {
+  var names = [
+    "Cart", "Delivery address", "Delivery options", "Payment method", "Review order",
+    "Order placed", "Order tracking", "Order detail", "Returns", "Return label",
+    "Refund status", "Help", "Contact us", "Live chat"
+  ];
+  var out = [];
+  for (var i = 0; i < n; i++) {
+    out.push({
+      name: names[i % names.length] + (i >= names.length ? " " + i : ""),
+      type: "FRAME", nodeId: "12:" + (400 + i), urlNodeId: "12-" + (400 + i),
+      fileKey: "abc123", url: "https://figma.com/design/abc123/x?node-id=12-" + (400 + i) + "&m=dev",
+      width: 390, height: 844
+    });
+  }
+  return out;
+}
+function selectionOf(n) {
+  var screens = manyScreens(n);
+  return {
+    type: "selection",
+    info: Object.assign({}, screens[0], {
+      screens: screens, page: "Flows", file: "Design System",
+      warn: n > 12, tooMany: n > 30 ? 30 : 0
+    })
+  };
+}
+
+// The plugin sends this once, on init. The settings screen reads its version and support
+// link from it rather than carrying either in the markup.
+var ABOUT = {
+  type: "about", pluginVersion: "1.1.0",
+  support: { name: "@Mustafa", url: "https://forhims.enterprise.slack.com/team/U0A7ZH40VMK" }
+};
+
+// Opaque ids for the folders, matching what the bridge sends: the panel never sees the
+// absolute path of a build target. The destination directory is the one path it does see,
+// and it arrives written out in full — `~` is shell notation to the designer reading it.
+// These are folders this designer has built into before, not a scan of a directory.
+var HOME_DIR = "/Users/designer";
+var PROJECTS = {
+  type: "projects",
+  prototypesDir: HOME_DIR,
+  projects: [
+    { id: "1f0c2a9b4d7e", name: "storefront" },
+    { id: "77aa31c5e0b2", name: "design-system" }
+  ],
+  saved: null
+};
+
+// Someone opening the plugin for the first time: nothing built yet, so nothing to recall.
+var NO_RECENTS = Object.assign({}, PROJECTS, { projects: [] });
+
+// Every screen a designer can land on, in the order they'd meet them.
+// `expect` is the point of the harness: asserting that *a* view rendered catches a blank
+// panel but not a wrong one, and a routing bug that showed the working panel instead of a
+// blocker passed cleanly until these were added.
+var STATES = [
+  { key: "onboarding", cap: "1 · Helper not installed",
+    expect: { view: "onboarding" }, msgs: [
+      status({ bridge: false, laws: null, claudeApp: false, claudeCli: false, claude: false, figmaMcp: false, figmaMcpState: "missing" })
+  ] },
+  { key: "blocked-app", cap: "2 · Claude Code missing",
+    expect: { view: "blocked", contains: /Claude Code isn't installed/ }, msgs: [
+      status({ claudeApp: false, claudeCli: false, claude: false, figmaMcp: false, figmaMcpState: "missing" })
+  ] },
+  { key: "blocked-mcp-missing", cap: "3 · Figma not registered",
+    expect: { view: "blocked", contains: /Connect Figma to Claude Code/ }, msgs: [
+      status({ figmaMcp: false, figmaMcpState: "missing" })
+  ] },
+  { key: "blocked-mcp-auth", cap: "4 · Needs approval",
+    expect: { view: "blocked", contains: /One last approval/ }, msgs: [
+      status({ figmaMcp: false, figmaMcpState: "needs-auth" })
+  ] },
+  { key: "blocked-laws", cap: "5 · Standards missing",
+    // Names the file. The bridge has always sent `missing` and the panel used to drop it.
+    expect: { view: "blocked", contains: /Design standards missing[\s\S]*prompt\.md/ }, msgs: [
+      status({ laws: { ok: false, missing: "prompt.md" } })
+  ] },
+  // Two statuses: the success screen is only shown to someone who watched it go from
+  // unready to ready, so an unready one has to come first.
+  // The distinguishing string is one of the checklist rows rather than the heading, so a
+  // success screen that rendered its title over an empty list fails here.
+  { key: "done", cap: "6 · Just set up",
+    expect: { view: "done", contains: /Helper installed and running/ },
+    msgs: [status({ bridge: false }), status()] },
+  { key: "main", cap: "7 · Returning designer",
+    expect: { view: "main", contains: /Happy Claudinggg/ },
+    msgs: [status(), SELECTION, PROJECTS] },
+  { key: "blocked-failed", cap: "8 · Connect attempt failed",
+    expect: { view: "blocked", contains: /Connect Figma to Claude Code/ }, msgs: [
+      status({ figmaMcp: false, figmaMcpState: "missing" }),
+      { type: "result", ok: false, message: "`claude` CLI not found on PATH" }
+  ] },
+  // Rendered at a height the panel never asked for, because that is the shape Figma gives
+  // it when docked or dragged taller — the one configuration where the layout has to hold
+  // itself together on its own. `tall` keeps its height instead of taking the panel's.
+  { key: "main-tall", cap: "9 · Taller window, docked", tall: 400,
+    expect: { view: "main", contains: /Send to Claude Code/ },
+    msgs: [status(), SELECTION, PROJECTS] },
+  // The smallest multi-selection there is, in a window far taller than it needs. The list
+  // has to look like two screens: it used to stretch to the full height either way, so two
+  // names sat at the top of a box of nothing and read as a list still loading.
+  { key: "main-two", cap: "10 · Two screens, tall window", tall: 560,
+    expect: { view: "main", contains: /2 screens/ },
+    msgs: [status(), selectionOf(2), PROJECTS] },
+  { key: "main-many", cap: "11 · A section selected", tall: 460,
+    expect: { view: "main", contains: /6 screens/ },
+    msgs: [status(), selectionOf(6), PROJECTS] },
+  { key: "main-warn", cap: "12 · More than we'd advise", tall: 460,
+    expect: { view: "main", contains: /that's a lot for one build/ },
+    msgs: [status(), selectionOf(18), PROJECTS] },
+  { key: "main-toomany", cap: "13 · Past the limit", tall: 460,
+    expect: { view: "main", contains: /too many to send/ },
+    msgs: [status(), selectionOf(34), PROJECTS] },
+  { key: "settings", cap: "14 · Settings", click: "open-settings",
+    expect: { view: "settings", contains: /How to use it/ },
+    msgs: [status(), SELECTION, PROJECTS, ABOUT] },
+  // What someone actually opens settings for. Every connection is down, and the screen has
+  // to say which — the panel behind it can only show three dots and one blocker at a time,
+  // and the standards aren't one of the three.
+  // The height Figma actually gives a docked panel. Everything on this screen has to stay
+  // reachable in it, which means one scrolling region and a rail that doesn't move.
+  { key: "settings-short", cap: "15 · Settings in a short window", click: "open-settings", tall: 300,
+    expect: { view: "settings", contains: /How to use it/ },
+    msgs: [status(), SELECTION, PROJECTS, ABOUT] },
+  { key: "settings-broken", cap: "16 · Settings, nothing connected", click: "open-settings",
+    expect: { view: "settings", contains: /Not connected/ },
+    msgs: [
+      status({ claudeApp: false, claudeCli: false, claude: false, figmaMcp: false,
+               figmaMcpState: "missing", laws: { ok: false, missing: "prompt.md" } }),
+      SELECTION, PROJECTS, ABOUT
+  ] },
+  // A machine deliberately running ahead of the org, so that a bug report from it says so
+  // without anyone having to ask which build they are on.
+  { key: "settings-edge", cap: "17 · Settings on the edge channel", click: "open-settings",
+    expect: { view: "settings", contains: /Channel/ },
+    msgs: [status({ channel: "main" }), SELECTION, PROJECTS, ABOUT] }
+];
+
+// A directory name is whatever the designer (or anything running as them) called a folder.
+// The dropdown used to be built by string-concatenating these into innerHTML.
+var HOSTILE_NAME = '"><img src=x onerror="window.__pwned=1">';
+
+// Figma injects these into the plugin iframe. Without them every themed colour resolves
+// to nothing and the screenshot is useless for judging the real thing.
+var FIGMA_THEME =
+  ":root{" +
+  "--figma-color-bg:#ffffff;" +
+  "--figma-color-bg-secondary:#f5f5f5;" +
+  "--figma-color-bg-brand:#0d99ff;" +
+  "--figma-color-bg-success:#14ae5c;" +
+  "--figma-color-bg-success-tertiary:#cff7d3;" +
+  "--figma-color-bg-danger-tertiary:#ffd6d2;" +
+  "--figma-color-text:rgba(0,0,0,.9);" +
+  "--figma-color-text-secondary:rgba(0,0,0,.5);" +
+  "--figma-color-text-onbrand:#ffffff;" +
+  "--figma-color-text-danger:#c00d0d;" +
+  "--figma-color-border:rgba(0,0,0,.1);" +
+  "--figma-color-icon-success:#14ae5c;" +
+  "--figma-color-icon-warning:#ffcd29;" +
+  "--figma-color-icon-danger:#f24822;" +
+  "}";
+
+var frames = {};   // key -> iframe
+var scripted = {}; // key -> the messages to send once it announces itself
+var posted = [];   // every message the plugin sent back to "Figma"
+var resizes = {};  // key -> every size it asked for, in order
+var fixedHeight = {}; // key -> this window keeps its height whatever the panel asks for
+
+function makeFrame(key, msgs, hidden) {
+  var frame = document.createElement("iframe");
+  // Matches figma.showUI in plugin/code.js — the panel resizes itself from here.
+  frame.style.width = "380px";
+  frame.style.height = "140px";
+  scripted[key] = msgs;
+  frames[key] = frame;
+
+  if (hidden) {
+    document.getElementById("probes").appendChild(frame);
+  } else {
+    var cell = document.createElement("div");
+    cell.className = "cell";
+    var cap = document.createElement("div");
+    cap.className = "cap";
+    cap.textContent = STATES.filter(function (s) { return s.key === key; })[0].cap;
+    cell.appendChild(cap);
+    cell.appendChild(frame);
+    document.getElementById("row").appendChild(cell);
+  }
+
+  frame.addEventListener("load", function () {
+    var style = frame.contentDocument.createElement("style");
+    style.textContent = FIGMA_THEME;
+    frame.contentDocument.head.appendChild(style);
+  });
+  frame.src = "/ui.html";
+  return frame;
+}
+
+function keyOf(source) {
+  for (var k in frames) if (frames[k].contentWindow === source) return k;
+  return null;
+}
+
+function sendTo(key, msg) {
+  frames[key].contentWindow.postMessage({ pluginMessage: msg }, "*");
+}
+
+window.addEventListener("message", function (event) {
+  var msg = event.data && event.data.pluginMessage;
+  if (!msg) return;
+  var key = keyOf(event.source);
+  if (!key) return;
+  posted.push({ frame: key, msg: msg });
+
+  if (msg.type === "init") {
+    scripted[key].forEach(function (m, i) {
+      setTimeout(function () { sendTo(key, m); }, 20 * (i + 1));
+    });
+    // Clicked after this frame's own messages, not on a clock started at page load — the
+    // iframes finish loading at whatever pace Chrome allows, and a fixed delay clicked
+    // into a panel that was still being fed.
+    var clicks = STATES.filter(function (s) { return s.key === key && s.click; });
+    if (clicks.length) setTimeout(function () {
+      var el = frames[key].contentDocument.getElementById(clicks[0].click);
+      if (el) el.click();
+    }, 20 * (scripted[key].length + 1) + 40);
+    return;
+  }
+  // This is what figma.ui.resize does to the plugin window.
+  if (msg.type === "resize") {
+    frames[key].style.width = msg.w + "px";
+    // Most frames model a Figma that grants the height. The fixed-height ones model the
+    // Figma that doesn't — docked, or resized by hand — which is the only configuration
+    // where the dead space at the bottom was ever visible. Applying the height here made
+    // the tall probe measure a snug window and assert nothing at all.
+    if (!fixedHeight[key]) frames[key].style.height = msg.h + "px";
+    var doc = frames[key].contentDocument;
+    (resizes[key] = resizes[key] || []).push({
+      asked: msg.h,
+      body_scrollHeight: doc ? doc.body.scrollHeight : null
+    });
+  }
+});
+
+STATES.forEach(function (s) {
+  makeFrame(s.key, s.msgs, false);
+  if (s.tall) { fixedHeight[s.key] = true; frames[s.key].style.height = s.tall + "px"; }
+});
+makeFrame("probe-grace", [status()], true);
+makeFrame("probe-action", [status({ figmaMcp: false, figmaMcpState: "missing" })], true);
+makeFrame("probe-repoll", [status({ figmaMcp: false, figmaMcpState: "missing" })], true);
+// Standards that break under someone who is already working. The rail used to carry a Laws
+// dot that went red at this moment; with it gone, routing is the only thing left that says
+// so, and it is what this proves still happens.
+makeFrame("probe-laws", [status()], true);
+makeFrame("probe-hostile", [status(), SELECTION, {
+  type: "projects", prototypesDir: HOME_DIR, saved: null,
+  projects: [{ id: "deadbeefcafe", name: HOSTILE_NAME }]
+}], true);
+makeFrame("probe-send", [status(), SELECTION, PROJECTS], true);
+// Figma does not always honour the height the panel asks for. Every other frame here is
+// rendered at its content height, which is precisely the case that was never broken — this
+// one is forced tall to stand in for a docked or hand-resized window.
+makeFrame("probe-tall", [status(), SELECTION, PROJECTS], true);
+fixedHeight["probe-tall"] = true;
+frames["probe-tall"].style.height = "900px";
+makeFrame("probe-folder", [status(), SELECTION, PROJECTS], true);
+makeFrame("probe-pick", [status(), SELECTION, PROJECTS], true);
+// A first-ever send, which is the state every designer meets once and the only one where
+// the recents list has to be absent rather than empty.
+makeFrame("probe-fresh", [status(), SELECTION, NO_RECENTS], true);
+// The support link, whose whole job is to work on a machine where nothing else does.
+makeFrame("probe-support", [status(), SELECTION, PROJECTS, ABOUT], true);
+// Someone who has sent before. The remembered id has to survive the poll that re-sends the
+// project list, which used to reset the dropdown to Default every two seconds.
+makeFrame("probe-saved", [status(), SELECTION, Object.assign({}, PROJECTS, {
+  saved: { mode: "existing", id: "77aa31c5e0b2" }
+})], true);
+// Its own frame: this one gets a deliberately hostile layer name pushed into it, and doing
+// that to a frame the rendered panels are measured from would corrupt what they assert.
+makeFrame("probe-names", [status(), selectionOf(2), PROJECTS], true);
+
+var VIEWS = ["loading", "onboarding", "blocked", "done", "main", "settings"];
+
+function visibleViews(doc) {
+  return VIEWS.filter(function (v) {
+    var el = doc.getElementById("view-" + v);
+    return el && !el.classList.contains("hidden");
+  });
+}
+
+function viewText(doc, view) {
+  var el = doc.getElementById("view-" + view);
+  return el ? el.textContent.replace(/\s+/g, " ").trim() : "";
+}
+
+// Reconstruct where the browser actually broke a line, a character at a time, so a
+// command split mid-path is a failed check rather than something to squint at.
+function renderedLines(el) {
+  var walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT), out = [], last = null;
+  var range = el.ownerDocument.createRange(), node;
+  while ((node = walker.nextNode())) {
+    for (var i = 0; i < node.length; i++) {
+      range.setStart(node, i); range.setEnd(node, i + 1);
+      var rect = range.getClientRects()[0];
+      if (!rect) continue;
+      var top = Math.round(rect.top);
+      if (top !== last) { out.push(""); last = top; }
+      out[out.length - 1] += node.data[i];
+    }
+  }
+  return out;
+}
+
+function measure(key) {
+  var frame = frames[key];
+  var doc = frame.contentDocument;
+  var shown = visibleViews(doc);
+  var box = Math.round(frame.getBoundingClientRect().height);
+  var content = Math.ceil(doc.body.scrollHeight);
+  return {
+    screen: key,
+    view: shown.join(",") || "(none)",
+    views_visible: shown.length,
+    panel: Math.round(frame.getBoundingClientRect().width) + "x" + box,
+    content_h: content,
+    // 2px of the slack is fitHeight's own margin, 2px is this page's iframe border.
+    slack: box - content,
+    overflows: doc.documentElement.scrollHeight > doc.documentElement.clientHeight + 1
+  };
+}
+
+var checks = [];
+function check(name, pass, detail) { checks.push({ name: name, pass: !!pass, detail: detail || "" }); }
+
+function runProbes(done) {
+  // A) A restarting bridge must not throw a set-up designer back to the install screen.
+  var gdoc = frames["probe-grace"].contentDocument;
+  check("grace: starts on the working panel", visibleViews(gdoc)[0] === "main", visibleViews(gdoc).join(","));
+  for (var i = 0; i < 3; i++) sendTo("probe-grace", status({ bridge: false }));
+
+  // The standards going missing is the one blocker that can arrive after a designer is
+  // already working — the files are re-read on every poll. It used to turn the rail's Laws
+  // dot red as well; routing to the blocked screen is now the whole of what tells them.
+  var lawsDoc = frames["probe-laws"].contentDocument;
+  check("standards: a machine with them loaded is left alone",
+    visibleViews(lawsDoc)[0] === "main", visibleViews(lawsDoc).join(","));
+  sendTo("probe-laws", status({ laws: { ok: false, missing: "figma-laws.md" } }));
+
+  setTimeout(function () {
+    check("standards: losing them mid-session stops the send and names the file",
+      visibleViews(lawsDoc)[0] === "blocked" &&
+      /Design standards missing[\s\S]*figma-laws\.md/.test(viewText(lawsDoc, "blocked")),
+      visibleViews(lawsDoc).join(",") + ": " + viewText(lawsDoc, "blocked").slice(0, 90));
+
+    // The success screen was the last place a designer met the standards as ordinary chrome,
+    // a green line reporting something they could not have acted on either way. Asserted as
+    // an absence *and* a row count, because a screen that had simply stopped rendering its
+    // checklist would satisfy the absence on its own.
+    var doneDoc = frames["done"].contentDocument;
+    var doneRows = doneDoc.getElementById("done-checks").children.length;
+    check("standards: the success screen doesn't mention them",
+      doneRows === 3 && !/standards/i.test(viewText(doneDoc, "done")),
+      doneRows + " rows: " + viewText(doneDoc, "done").slice(0, 120));
+
+    var held = visibleViews(gdoc)[0];
+    check("grace: holds the panel through 3 missed polls", held === "main", "showed " + held);
+    sendTo("probe-grace", status({ bridge: false }));
+
+    setTimeout(function () {
+      var after = visibleViews(gdoc)[0];
+      check("grace: gives up after the 4th and shows setup", after === "onboarding", "showed " + after);
+
+      // B) The blocked screen's button has to do something, and answer where it was clicked.
+      var adoc = frames["probe-action"].contentDocument;
+      var btn = adoc.getElementById("blocked-action");
+      check("mcp-missing: routes to its own screen",
+        visibleViews(adoc)[0] === "blocked" &&
+        /Connect Figma to Claude Code/.test(adoc.getElementById("blocked-title").textContent),
+        adoc.getElementById("blocked-title").textContent);
+      check("mcp-missing: offers a button",
+        !btn.classList.contains("hidden") && btn.textContent === "Connect Figma", btn.textContent);
+
+      var before = posted.filter(function (p) { return p.frame === "probe-action" && p.msg.type === "setup"; }).length;
+      btn.click();
+
+      setTimeout(function () {
+        var sent = posted.filter(function (p) { return p.frame === "probe-action" && p.msg.type === "setup"; }).length;
+        check("mcp-missing: the button asks the bridge to connect", sent === before + 1, sent + " setup message(s)");
+        check("mcp-missing: button shows progress", btn.disabled && btn.textContent === "Connecting…", btn.textContent);
+        sendTo("probe-action", { type: "result", ok: false, message: "`claude` CLI not found on PATH" });
+
+        setTimeout(function () {
+          check("mcp-missing: a failure is reported on this screen, not the hidden one",
+            /not found on PATH/.test(adoc.getElementById("blocked-note").textContent),
+            adoc.getElementById("blocked-note").textContent);
+          check("mcp-missing: button returns to its label",
+            !btn.disabled && btn.textContent === "Connect Figma", btn.textContent);
+
+          // C) The 2s poll must not wipe a message the designer is still reading.
+          var rdoc = frames["probe-repoll"].contentDocument;
+          rdoc.getElementById("blocked-note").textContent = "sticky error";
+          sendTo("probe-repoll", status({ figmaMcp: false, figmaMcpState: "missing" }));
+
+          setTimeout(function () {
+            check("re-poll: leaves an on-screen error alone",
+              rdoc.getElementById("blocked-note").textContent === "sticky error",
+              rdoc.getElementById("blocked-note").textContent);
+
+            // D) A hostile folder name must be inert text, not markup.
+            var hwin = frames["probe-hostile"].contentWindow;
+            var hdoc = frames["probe-hostile"].contentDocument;
+            var opts = hdoc.getElementById("target").options;
+            var hostile = opts[opts.length - 1];
+            check("hostile project name: no script ran", !hwin.__pwned, String(hwin.__pwned));
+            check("hostile project name: injected no elements",
+              hdoc.getElementById("target").getElementsByTagName("img").length === 0, "");
+            check("hostile project name: shown verbatim as text",
+              hostile && hostile.textContent === HOSTILE_NAME, hostile && hostile.textContent);
+            check("hostile project name: option carries the id, not a path",
+              hostile && hostile.value === "deadbeefcafe", hostile && hostile.value);
+
+            // E) Send must stay disabled while a build is in flight, even as the
+            // selection poll keeps firing underneath it.
+            var sdoc = frames["probe-send"].contentDocument;
+            var send = sdoc.getElementById("send");
+            var builds = function () {
+              return posted.filter(function (p) {
+                return p.frame === "probe-send" && p.msg.type === "build";
+              }).length;
+            };
+            check("send: enabled with a frame selected", !send.disabled, "");
+            send.click();
+            // Only the button state is readable synchronously — postMessage is delivered
+            // on a later task, so the build count has to be read after a tick.
+            check("send: disables immediately", send.disabled && send.textContent === "Sending…", send.textContent);
+            sendTo("probe-send", SELECTION);
+            sendTo("probe-send", status());
+
+            setTimeout(function () {
+              check("send: one build sent", builds() === 1, builds() + " build(s)");
+              check("send: stays disabled through a selection re-poll",
+                send.disabled, "disabled=" + send.disabled + " label=" + send.textContent);
+              send.click();
+
+              setTimeout(function () {
+                check("send: a second click sends nothing", builds() === 1, builds() + " build(s)");
+                sendTo("probe-send", { type: "result", ok: true, message: "Created checkout-payment-method." });
+
+                setTimeout(function () {
+                  check("send: re-enables once the build answers",
+                    !send.disabled && send.textContent === "Send to Claude Code", send.textContent);
+
+                  // F) In a window taller than the content, the action has to travel to the
+                  // bottom edge rather than leave a band of dead space beneath it — while
+                  // the panel still asks for the snug height, so it can shrink back if the
+                  // window ever honours the request.
+                  var tdoc = frames["probe-tall"].contentDocument;
+                  var tallView = tdoc.getElementById("view-main");
+                  var vh = frames["probe-tall"].contentWindow.innerHeight;
+
+                  // Whatever height Figma grants, the sign-off ends 24px above the bottom
+                  // edge. Measured from the last thing in the panel rather than from the
+                  // button, or the gap silently becomes 24px plus the sign-off's height.
+                  var tallSign = tdoc.getElementsByClassName("sign")[0].getBoundingClientRect().bottom;
+                  check("tall window: the footer sits 24px above the bottom edge",
+                    Math.abs(vh - tallSign - 24) <= 2,
+                    Math.round(vh - tallSign) + "px below it in a " + vh + "px window");
+
+                  // The same 24px with a full list, where the bottom is reached by the list
+                  // growing rather than by the margin pushing.
+                  var listWin = frames["main-toomany"].contentWindow;
+                  var listSign = frames["main-toomany"].contentDocument
+                    .getElementsByClassName("sign")[0].getBoundingClientRect().bottom;
+                  check("a full list keeps the same 24px under the footer",
+                    Math.abs(listWin.innerHeight - listSign - 24) <= 2,
+                    Math.round(listWin.innerHeight - listSign) + "px below it");
+
+                  var asks = resizes["probe-tall"] || [];
+                  var lastAsk = asks.length ? asks[asks.length - 1].asked : null;
+                  check("tall window: still asks for the content height",
+                    lastAsk !== null && lastAsk < 500, "asked for " + lastAsk + "px in a " + vh + "px window");
+
+                  // H) Multi-select. Nothing in the panel stretches to fill a docked
+                  // window any more, so these are about the list tracking the selection.
+                  var manyDoc = frames["main-many"].contentDocument;
+
+                  // The reported bug: two screens drew the same full-height box as thirty,
+                  // so a two-frame send looked like a list that had failed to load.
+                  var twoDoc = frames["main-two"].contentDocument;
+                  var twoWin = frames["main-two"].contentWindow;
+                  var twoList = twoDoc.getElementById("screens-list").getBoundingClientRect();
+                  var manyList = manyDoc.getElementById("screens-list").getBoundingClientRect();
+                  var overList = frames["main-toomany"].contentDocument
+                    .getElementById("screens-list").getBoundingClientRect();
+                  check("screens: two rows draw a two-row box, not a window-high one",
+                    twoList.height < 90,
+                    Math.round(twoList.height) + "px in a " + twoWin.innerHeight + "px window");
+                  check("screens: the list grows with the selection",
+                    manyList.height > twoList.height + 20,
+                    "2→" + Math.round(twoList.height) + "px  6→" + Math.round(manyList.height) + "px");
+                  // Growth has to stop somewhere, or the button leaves the window. In a
+                  // window this short the list gives way well before the cap — which is the
+                  // other half of it, and why the button below is still reachable at 34.
+                  check("screens: growth stops before it crowds the send button",
+                    overList.height <= 250, Math.round(overList.height) + "px at 34 screens");
+
+                  // The row above the list is the count, and past twelve screens the warning
+                  // beside it. Neither box shrinks or wraps, so the pair is a single line for
+                  // as long as it fits — measured against the count's own height rather than
+                  // a pixel value, so this keeps its meaning if the row's type changes size.
+                  var heads = ["main-two", "main-many", "main-warn", "main-toomany"].map(function (k) {
+                    var d = frames[k].contentDocument;
+                    var head = d.querySelector(".screens-head");
+                    return {
+                      key: k,
+                      row: head.getBoundingClientRect().height,
+                      line: d.getElementById("screens-count").getBoundingClientRect().height,
+                      wide: head.scrollWidth,
+                      room: head.clientWidth
+                    };
+                  });
+                  check("screens: the header holds one line at every selection size",
+                    heads.every(function (h) { return h.row <= h.line + 2; }),
+                    heads.map(function (h) {
+                      return h.key + " " + Math.round(h.row) + "px over a " +
+                        Math.round(h.line) + "px line";
+                    }).join(", "));
+                  // The half that can still fail, and the reason a height alone isn't enough:
+                  // nothing here wraps, so a count and warning that outgrew the row would
+                  // slide off the panel edge with nothing on screen to say they had. The
+                  // longest warning there is arrives at 34 screens.
+                  check("screens: the count and its warning fit the row without spilling",
+                    heads.every(function (h) { return h.wide <= h.room + 1; }),
+                    heads.map(function (h) {
+                      return h.key + " " + h.wide + " in " + h.room + "px";
+                    }).join(", "));
+
+                  // ---- settings ----
+                  var setDoc = frames["settings"].contentDocument;
+                  var setWin = frames["settings"].contentWindow;
+                  var conns = setDoc.getElementById("conn-list");
+                  check("settings: every connection is listed, not just the broken one",
+                    conns.children.length === 4, conns.children.length + " rows");
+                  check("settings: a healthy machine reads as healthy",
+                    conns.querySelectorAll("li.on").length === 4,
+                    conns.querySelectorAll("li.on").length + " of 4 on");
+                  // Three versions and a Node build. Support's first question is which of
+                  // these is behind, and a designer has nowhere else to read them.
+                  check("settings: the versions are real, not placeholders",
+                    /1\.1\.0/.test(setDoc.getElementById("version-list").textContent) &&
+                    /a029352/.test(setDoc.getElementById("version-list").textContent),
+                    setDoc.getElementById("version-list").textContent.replace(/\s+/g, " ").trim());
+                  // Release engineering is not something to put in front of a designer who
+                  // came here because a send failed — except on the machines where it is
+                  // the answer to "which build are you on?".
+                  check("settings: the channel is silent on the build everyone runs",
+                    !/Channel/.test(setDoc.getElementById("version-list").textContent),
+                    setDoc.getElementById("version-list").textContent.replace(/\s+/g, " ").trim());
+                  check("settings: a machine running ahead says so",
+                    /Channel/.test(frames["settings-edge"].contentDocument
+                      .getElementById("version-list").textContent),
+                    frames["settings-edge"].contentDocument
+                      .getElementById("version-list").textContent.replace(/\s+/g, " ").trim());
+                  check("settings: support names a person to message",
+                    setDoc.getElementById("support-link").textContent === "@Mustafa",
+                    setDoc.getElementById("support-link").textContent);
+                  // The screen opens on what it is and what state the machine is in, not on
+                  // a wall of instructions — troubleshooting is why it gets opened.
+                  check("settings: it opens on the status, not on the manual",
+                    setDoc.querySelector(".hero-title").getBoundingClientRect().bottom <
+                    conns.getBoundingClientRect().top &&
+                    conns.getBoundingClientRect().top <
+                    setDoc.querySelector(".steps").getBoundingClientRect().top, "");
+                  // The way in and the way out are the same size, because they are the same
+                  // kind of control — at 12px the gear read as punctuation after the dots.
+                  var gear = frames["main"].contentDocument.getElementById("open-settings");
+                  var back = setDoc.getElementById("close-settings");
+                  check("settings: the gear is as big as the way back out",
+                    Math.abs(gear.getBoundingClientRect().width -
+                             back.getBoundingClientRect().width) <= 1 &&
+                    gear.getBoundingClientRect().width >= 20,
+                    Math.round(gear.getBoundingClientRect().width) + "px vs " +
+                    Math.round(back.getBoundingClientRect().width) + "px");
+                  check("settings: it fits the window it opened in",
+                    setDoc.documentElement.scrollHeight <= setWin.innerHeight + 1,
+                    setDoc.documentElement.scrollHeight + "px in " + setWin.innerHeight + "px");
+                  // Routing runs every two seconds. Left alone it would replace this screen
+                  // with the panel a moment after it was opened.
+                  check("settings: a status poll doesn't close it",
+                    visibleViews(setDoc).join(",") === "settings", visibleViews(setDoc).join(","));
+
+                  // A settings screen that overflows its window is a settings screen whose
+                  // version numbers cannot be read, which is most of why it exists.
+                  var shortDoc = frames["settings-short"].contentDocument;
+                  var shortWin = frames["settings-short"].contentWindow;
+                  var shortBody = shortDoc.getElementById("settings-body");
+                  check("settings: a short window scrolls rather than overflowing",
+                    shortDoc.documentElement.scrollHeight <= shortWin.innerHeight + 1 &&
+                    shortBody.scrollHeight > shortBody.clientHeight,
+                    "page " + shortDoc.documentElement.scrollHeight + "px in " +
+                    shortWin.innerHeight + "px, body scrolls " + shortBody.scrollHeight + "px");
+                  check("settings: the way back stays put while it scrolls",
+                    shortDoc.getElementById("close-settings").getBoundingClientRect().bottom
+                      <= shortWin.innerHeight, "");
+
+                  // The blocked screen behind this one can only name the first problem it
+                  // hits. Three are wrong here, and all three have to be readable at once.
+                  var brokeDoc = frames["settings-broken"].contentDocument;
+                  var brokeText = brokeDoc.getElementById("conn-list").textContent;
+                  check("settings: a broken machine names every failure, not just the first",
+                    brokeDoc.getElementById("conn-list").querySelectorAll("li.on").length === 1 &&
+                    /Install Claude Code/.test(brokeText) && /Not connected/.test(brokeText) &&
+                    /Couldn't be loaded/.test(brokeText),
+                    brokeText.replace(/\s+/g, " ").trim());
+                  // Reached from the blocked screen, which is the state it explains.
+                  check("settings: reachable when the panel is blocked",
+                    visibleViews(brokeDoc).join(",") === "settings", visibleViews(brokeDoc).join(","));
+
+                  // ---- the destination dropdown ----
+                  var tgt = frames["main"].contentDocument.getElementById("target");
+                  check("destination: first-time default is a new prototype",
+                    tgt.value === "__new__", tgt.value);
+                  check("destination: two ways in, named plainly",
+                    tgt.options[0].text === "Default" && tgt.options[1].text === "Select Folder…" &&
+                    tgt.options[1].value === "__pick__",
+                    tgt.options[0].text + " / " + tgt.options[1].text);
+                  // The location moved out of the option text and into the hint: the option
+                  // is the choice, the hint is where it lands. Written out in full, because
+                  // "a new folder in ~" asks a designer to decode shell notation to find out
+                  // where their work is about to go.
+                  var mainHint = frames["main"].contentDocument
+                    .getElementById("target-hint").textContent;
+                  check("destination: the hint says where Default builds, in full",
+                    mainHint.indexOf(HOME_DIR) !== -1 && mainHint.indexOf("~") === -1 &&
+                    /default location/i.test(mainHint),
+                    mainHint);
+                  check("destination: the label says what the folder is for",
+                    /builds in/i.test(frames["main"].contentDocument
+                      .querySelector('label[for="target"]').title), "");
+                  // It used to be a scan of the home directory, so Library, Movies and
+                  // node_modules were all offered as places to build a prototype. Now the
+                  // list is only where this designer has built before.
+                  var recentGroup = tgt.querySelector("optgroup");
+                  check("destination: the folder list is where you built before",
+                    recentGroup && recentGroup.label === "Recent" &&
+                    recentGroup.children.length === 2,
+                    recentGroup ? recentGroup.label + ", " + recentGroup.children.length : "(none)");
+                  // A "Recent" heading over nothing reads as a list that failed to load.
+                  var freshTgt = frames["probe-fresh"].contentDocument.getElementById("target");
+                  check("destination: a first send has no folder list at all",
+                    freshTgt.options.length === 2 && !freshTgt.querySelector("optgroup"),
+                    freshTgt.options.length + " options");
+
+                  check("many: the list names every selected screen",
+                    manyDoc.getElementById("screens-list").children.length === 6,
+                    manyDoc.getElementById("screens-list").children.length + " rows");
+                  check("many: a single frame gets no list",
+                    frames["main"].contentDocument.getElementById("screens").className.indexOf("hidden") !== -1,
+                    frames["main"].contentDocument.getElementById("screens").className);
+                  // The card leads with screen one and so does the list; showing both cost
+                  // the list a third of its height to say the same thing twice.
+                  check("many: the list replaces the single-frame card",
+                    manyDoc.getElementById("frame-card").getBoundingClientRect().height === 0,
+                    Math.round(manyDoc.getElementById("frame-card").getBoundingClientRect().height) + "px");
+                  check("many: the list is tall enough to read as a list",
+                    manyDoc.getElementById("screens-list").getBoundingClientRect().height >= 70,
+                    Math.round(manyDoc.getElementById("screens-list").getBoundingClientRect().height) + "px");
+                  // Naming is the macOS dialog's job now. A text field here was a second
+                  // place to name a folder that could disagree with the one people already
+                  // know, and it had no idea whether the name it accepted was free.
+                  check("no folder-name field anywhere in the panel",
+                    !manyDoc.getElementById("project-name"),
+                    manyDoc.getElementById("project-name") ? "still present" : "gone");
+
+                  // The failure this replaces: with the list allowed to grow past the
+                  // panel, 34 screens pushed the button out of the window entirely and
+                  // there was no way to send at all.
+                  var overDoc = frames["main-toomany"].contentDocument;
+                  var overWin = frames["main-toomany"].contentWindow;
+                  var overSend = overDoc.getElementById("send").getBoundingClientRect();
+                  check("over the limit: the send button is still on screen",
+                    overSend.bottom <= overWin.innerHeight + 1 && overSend.top >= 0,
+                    "button bottom " + Math.round(overSend.bottom) + " in a " + overWin.innerHeight + "px window");
+                  check("over the limit: sending is refused here, not at the bridge",
+                    overDoc.getElementById("send").disabled, "disabled=" + overDoc.getElementById("send").disabled);
+                  check("past the advisory count: warned but still sendable",
+                    !frames["main-warn"].contentDocument.getElementById("send").disabled,
+                    "disabled=" + frames["main-warn"].contentDocument.getElementById("send").disabled);
+
+                  // Layer names are arbitrary designer-typed text and reach this iframe
+                  // from the plugin sandbox, so the list has to build them as text nodes.
+                  var xssDoc = frames["probe-names"].contentDocument;
+                  var xssWin = frames["probe-names"].contentWindow;
+                  xssWin.postMessage({ pluginMessage: { type: "selection", info: Object.assign({}, ONE_SCREEN, {
+                    screens: [
+                      { name: "<img src=x onerror=\"window.__pwned=1\">", type: "FRAME", nodeId: "1:1", width: 1, height: 1 },
+                      { name: "Fine", type: "FRAME", nodeId: "2:2", width: 1, height: 1 }
+                    ], page: "P", file: "F"
+                  }) } }, "*");
+                  setTimeout(function () {
+                    check("a layer name cannot inject markup into the panel",
+                      !xssWin.__pwned && xssDoc.getElementById("screens-list").getElementsByTagName("img").length === 0,
+                      "pwned=" + !!xssWin.__pwned);
+
+                  var tallCard = tdoc.getElementById("frame-card").getBoundingClientRect().height;
+                  var snugCard = frames["main"].contentDocument
+                    .getElementById("frame-card").getBoundingClientRect().height;
+                  check("tall window: the selection card does not absorb the slack",
+                    Math.abs(tallCard - snugCard) <= 2,
+                    Math.round(tallCard) + "px in a " + vh + "px window vs " +
+                    Math.round(snugCard) + "px snug");
+
+                  // G) Changing the destination. The picker is native and opens on the Mac,
+                  // so the only thing testable here is the round trip: ask, show that
+                  // something is happening, and report back what was chosen.
+                  // Changing where new folders are made is a preference, not part of
+                  // sending, so it is driven from the settings screen — in the send flow it
+                  // sat inside a line describing a different decision and got mistaken for
+                  // it. The dropdown names the location, so it has to follow the change.
+                  var fdoc = frames["probe-folder"].contentDocument;
+                  fdoc.getElementById("open-settings").click();
+                  check("default location: named on the settings screen",
+                    fdoc.getElementById("dir-path").textContent === HOME_DIR,
+                    fdoc.getElementById("dir-path").textContent);
+                  check("default location: the send flow says where a new folder goes",
+                    fdoc.getElementById("target-hint").textContent.indexOf(HOME_DIR + ".") !== -1,
+                    fdoc.getElementById("target-hint").textContent);
+
+                  var changeBtn = fdoc.getElementById("change-dir");
+                  var asked = function () {
+                    return posted.filter(function (p) {
+                      return p.frame === "probe-folder" && p.msg.type === "chooseFolder";
+                    }).length;
+                  };
+                  changeBtn.click();
+                  check("default location: says the picker is open",
+                    fdoc.getElementById("change-dir").disabled, fdoc.getElementById("change-dir").textContent);
+
+                  setTimeout(function () {
+                    check("default location: asked the bridge once", asked() === 1, asked() + " request(s)");
+                    sendTo("probe-folder", { type: "folderChosen", ok: true,
+                      prototypesDir: HOME_DIR + "/Work/Mockups" });
+
+                    setTimeout(function () {
+                      check("default location: settings shows the folder that was picked",
+                        fdoc.getElementById("dir-path").textContent === HOME_DIR + "/Work/Mockups",
+                        fdoc.getElementById("dir-path").textContent);
+                      // The one that was actually broken: the send flow kept naming the old
+                      // location, so the build went somewhere the panel wasn't saying.
+                      check("default location: the send flow follows it",
+                        fdoc.getElementById("target-hint").textContent
+                          .indexOf(HOME_DIR + "/Work/Mockups.") !== -1,
+                        fdoc.getElementById("target-hint").textContent);
+                      check("default location: offers to change it again",
+                        !fdoc.getElementById("change-dir").disabled, "");
+                      // Cancelling is a decision, so it must not leave an error on screen.
+                      fdoc.getElementById("change-dir").click();
+                      sendTo("probe-folder", { type: "folderChosen", ok: false, cancelled: true });
+
+                      setTimeout(function () {
+                        check("default location: cancelling says nothing and keeps the folder",
+                          fdoc.getElementById("dir-note").textContent === "" &&
+                          fdoc.getElementById("dir-path").textContent === HOME_DIR + "/Work/Mockups",
+                          "note=" + JSON.stringify(fdoc.getElementById("dir-note").textContent));
+
+                        // ---- New folder…, which is the picker choosing this build's target ----
+                        var pdoc = frames["probe-pick"].contentDocument;
+                        var psel = pdoc.getElementById("target");
+                        var pickAsked = function () {
+                          return posted.filter(function (p) {
+                            return p.frame === "probe-pick" && p.msg.type === "chooseTarget";
+                          }).length;
+                        };
+                        psel.value = "__pick__";
+                        psel.onchange();
+                        // The dialog is modal on the designer's Mac; a send fired underneath
+                        // it would build somewhere they were in the middle of changing.
+                        check("New folder…: Send waits for the dialog",
+                          pdoc.getElementById("send").disabled, "");
+
+                        setTimeout(function () {
+                        check("New folder…: opens the dialog on selection, with nothing to confirm",
+                          pickAsked() === 1, pickAsked() + " request(s)");
+                        sendTo("probe-pick", {
+                          type: "targetChosen", ok: true,
+                          id: "aa11bb22cc33", name: "Spring campaign", path: HOME_DIR + "/Work/Spring campaign"
+                        });
+
+                        setTimeout(function () {
+                          check("New folder…: the chosen folder becomes the destination",
+                            pdoc.getElementById("target").value === "aa11bb22cc33",
+                            pdoc.getElementById("target").value);
+                          check("New folder…: it says where that is",
+                            pdoc.getElementById("target-hint").textContent.indexOf(HOME_DIR + "/Work/Spring campaign") !== -1,
+                            pdoc.getElementById("target-hint").textContent);
+                          check("New folder…: Send comes back",
+                            !pdoc.getElementById("send").disabled, "");
+                          // The picker can return a folder from anywhere, and it only joins
+                          // recents once a build lands there — so the next poll's list, which
+                          // is recents, would otherwise drop the folder just chosen.
+                          sendTo("probe-pick", PROJECTS);
+
+                          setTimeout(function () {
+                            check("New folder…: a just-picked folder survives the next poll",
+                              pdoc.getElementById("target").value === "aa11bb22cc33",
+                              pdoc.getElementById("target").value);
+
+                            // Cancelling has to put the dropdown back; leaving "New folder…"
+                            // selected would send a build to an option that isn't a folder.
+                            var pd2 = pdoc.getElementById("target");
+                            pd2.value = "__pick__";
+                            pd2.onchange();
+                            sendTo("probe-pick", { type: "targetChosen", ok: false, cancelled: true });
+
+                            setTimeout(function () {
+                              check("New folder…: cancelling falls back to the last folder",
+                                pdoc.getElementById("target").value === "aa11bb22cc33" &&
+                                pdoc.getElementById("result").textContent === "",
+                                pdoc.getElementById("target").value);
+
+                              var sdoc = frames["probe-saved"].contentDocument;
+                              check("destination: the second visit starts on the last folder used",
+                                sdoc.getElementById("target").value === "77aa31c5e0b2",
+                                sdoc.getElementById("target").value);
+                              // This hint read "Adds these screens to what is already there",
+                              // which the panel is in no position to say: `/projects` sends an
+                              // id and a name per folder and no listing, on purpose — the
+                              // alternative is a readdir per folder every two seconds. So a
+                              // folder whose earlier build produced nothing, or that was
+                              // emptied in Finder since, was described as holding work it did
+                              // not have. Pinned as an exact sentence rather than a search for
+                              // banned words, because the next rewording should have to come
+                              // back and read this: having been sent to is the only part of a
+                              // remembered folder the panel can still vouch for.
+                              check("destination: a remembered folder's hint names provenance, not contents",
+                                sdoc.getElementById("target-hint").textContent ===
+                                  "Builds in a folder you've used before.",
+                                sdoc.getElementById("target-hint").textContent);
+
+                              // ---- the support link ----
+                              // It asks the bridge to open Slack rather than naming a URL
+                              // to be opened: the panel can't reach a `slack://` link at
+                              // all, and a bridge that opened whatever it was handed would
+                              // be a way to launch arbitrary schemes on this Mac.
+                              var supDoc = frames["probe-support"].contentDocument;
+                              supDoc.getElementById("open-settings").click();
+                              supDoc.getElementById("support-link").click();
+
+                              setTimeout(function () {
+                                var sup = posted.filter(function (p) {
+                                  return p.frame === "probe-support" && p.msg.type === "openSupport";
+                                });
+                                check("support: clicking asks for Slack, not for a URL to open",
+                                  sup.length === 1 && sup[0].msg.url === undefined,
+                                  JSON.stringify(sup.map(function (p) { return p.msg; })));
+                                // This screen is most likely to be open when the bridge is
+                                // dead, which is exactly when the link can't work — and a
+                                // link that quietly does nothing leaves someone who needs
+                                // help with no way to ask for it.
+                                sendTo("probe-support", { type: "supportOpened", ok: false,
+                                  url: "https://forhims.enterprise.slack.com/team/U0A7ZH40VMK" });
+
+                                setTimeout(function () {
+                                  check("support: a link that didn't open says where to go instead",
+                                    /@Mustafa/.test(supDoc.getElementById("support-note").textContent) &&
+                                    /U0A7ZH40VMK/.test(supDoc.getElementById("support-note").textContent),
+                                    supDoc.getElementById("support-note").textContent);
+                                  sendTo("probe-support", { type: "supportOpened", ok: true });
+
+                                  setTimeout(function () {
+                                    check("support: nothing is said when Slack simply opens",
+                                      supDoc.getElementById("support-note").textContent === "",
+                                      supDoc.getElementById("support-note").textContent);
+                                    done();
+                                  }, 80);
+                                }, 80);
+                              }, 80);
+                            }, 80);
+                          }, 80);
+                        }, 80);
+                        }, 80);
+                      }, 80);
+                    }, 80);
+                  }, 80);
+                  }, 80);
+                }, 80);
+              }, 80);
+            }, 80);
+          }, 80);
+        }, 80);
+      }, 80);
+    }, 80);
+  }, 120);
+}
+
+setTimeout(function () {
+  runProbes(function () {
+    var rows = STATES.map(function (s) { return measure(s.key); });
+    rows.forEach(function (r, i) {
+      var expect = STATES[i].expect;
+      check(r.screen + ": exactly one view visible", r.views_visible === 1, r.view);
+      check(r.screen + ": renders the " + expect.view + " view", r.view === expect.view, "showed " + r.view);
+      if (expect.contains) {
+        var text = viewText(frames[r.screen].contentDocument, expect.view);
+        check(r.screen + ": says the right thing", expect.contains.test(text), text.slice(0, 140));
+      }
+      check(r.screen + ": nothing clipped", !r.overflows, "");
+      check(r.screen + ": no dead space", Math.abs(r.slack) <= 4, r.slack + "px slack");
+    });
+
+    var cmdEl = frames["onboarding"].contentDocument.getElementById("install-cmd");
+    var cmdLines = renderedLines(cmdEl);
+    check("install command: no line broken mid-path",
+      !cmdLines.some(function (l) { return /-$/.test(l.trim()); }), cmdLines.join(" ⏎ "));
+    check("install command: copies as one line",
+      cmdEl.textContent.trim().indexOf("\n") === -1, "");
+    // A bare `git clone … && install` is fatal the second time: git refuses a non-empty
+    // directory and && then skips the installer. The blocked screens tell designers to
+    // re-run this command, so the re-run is the one that has to work.
+    check("install command: safe to paste twice",
+      /^\[ -d \S+ \] \|\| git clone /.test(cmdEl.textContent.trim()),
+      cmdEl.textContent.trim().slice(0, 46) + "…");
+
+    // The image is the point of this file, and it silently lost its last row twice when
+    // states were added past what the browser window was sized for. run.js turns this into
+    // a failure so the render can't quietly stop showing the thing that just changed.
+    check("every panel is inside the screenshot",
+      document.documentElement.scrollHeight <= window.innerHeight,
+      "page is " + document.documentElement.scrollHeight + "px, window is " +
+      window.innerHeight + "px — raise --window-size in run.js");
+
+    var report = {
+      geometry: rows,
+      checks: checks,
+      main_resizes: resizes["main"],
+      install_cmd_lines: cmdLines,
+      // Exactly what the Copy button puts on the clipboard. run.js compares it to the
+      // command in README.md, because the markup that keeps paths intact sits inside it.
+      install_cmd_copied: cmdEl.textContent.trim(),
+      failed: checks.filter(function (c) { return !c.pass; }).length
+    };
+    document.getElementById("report").textContent = JSON.stringify(report, null, 1);
+  });
+}, 700);
+
+// A check that throws — usually because it names an element a redesign removed — used to
+// leave the placeholder text in place, and run.js reported it as invalid JSON with no clue
+// which line failed. Fail as a report instead, so the message reaches the terminal.
+window.onerror = function (message, source, line) {
+  var el = document.getElementById("report");
+  if (el.textContent !== "running…") return;
+  el.textContent = JSON.stringify({
+    geometry: [], checks: [{ name: "harness: " + message + " (line " + line + ")", pass: false, detail: "" }],
+    main_resizes: [], install_cmd_lines: [], install_cmd_copied: "", failed: 1
+  }, null, 1);
+};
+</script>
+</body>
+</html>

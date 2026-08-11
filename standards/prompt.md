@@ -5,8 +5,6 @@ Build the screens listed below ({{screenCount}} in total) in this project, from 
 {{designSource}}
 <!-- SCREEN:END -->
 
-Read the design before writing anything: `get_design_context` for every value, `get_variable_defs` for the token map, `get_screenshot` as the reference for the final visual diff, `download_assets` for every icon. Do this per screen, in the order listed.
-
 The ten Figma implementation laws in this project's `CLAUDE.md` are binding — read them
 before you start and hold to them for the whole build, not only the first turn.
 Canonical copy: https://raw.githubusercontent.com/maljaburi/FigmaToClaude/refs/heads/main/standards/figma-laws.md
@@ -24,6 +22,11 @@ Canonical copy: https://raw.githubusercontent.com/maljaburi/FigmaToClaude/refs/h
      for it. Anything this file could assert about that is a snapshot taken before Claude Code
      opens, and the folder can be emptied or half-built in between; the laws tell the agent to
      look at the folder and decide, which is a thing it can do and this file cannot.
+
+     How to read a design — which MCP call, in what order — is in the laws for the same reason
+     the laws are: it is a working method rather than a fact about this send, and it has to
+     hold past the turn where this text scrolls out of the context. It is also the first thing
+     the agent does, so it belongs in the file that is already loaded when it starts.
 
      To go back to the old behaviour, put {{laws}} on a line of its own — the placeholder
      still resolves. -->

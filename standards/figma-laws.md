@@ -21,6 +21,12 @@ by these same laws to reuse them.
 Either way, never treat "the project is empty" as permission to guess a value: an
 unresolvable value is still a STOP.
 
+Then read the design before you write anything, one screen at a time and in this order:
+`get_design_context` for every value, `get_variable_defs` for the token map,
+`get_screenshot` as the reference for the visual diff at the end, and `download_assets`
+for every icon. The laws below assume you have done this — the values they hold you to
+only exist in that output.
+
 1. **No guessing.** Every color, spacing, radius, font, size, and string comes from
   Figma MCP output or from existing code. If a value cannot be resolved from either,
    STOP and ask. Never approximate, never round to a "nicer" number, never substitute

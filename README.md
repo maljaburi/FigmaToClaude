@@ -24,8 +24,10 @@ first turn, and the prompt points at that file and at
 [the canonical copy](https://raw.githubusercontent.com/maljaburi/FigmaToClaude/refs/heads/main/standards/figma-laws.md)
 — the raw URL, so anything that follows it gets the markdown rather than a GitHub page.
 They were once pasted into the composer as well, which put the entire ruleset on top of a brief
-that now runs about 830 characters for two screens — and that length was costing exactly the
-review the prompt existed to enable. That link serves whatever is on `main`, while the copy
+that now runs under 600 characters for two screens — and that length was costing exactly the
+review the prompt existed to enable. How to read a design — which MCP call, in what order — is
+in the laws for the same reason: it is a working method rather than a fact about this send, and
+it has to hold past the turn where the composer scrolls out of the context. That link serves whatever is on `main`, while the copy
 written into the project comes from the designer's own clone, which follows `release` — so
 between a push and a release the two can differ, and the `CLAUDE.md` in the project is the
 one that governs the build.

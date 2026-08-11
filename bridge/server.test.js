@@ -422,6 +422,18 @@ test("the shipped laws still tell the agent to look at the folder", () => {
   assert.match(managed, /in place|already holds|existing codebase/i, "the branch for one with work in it");
 });
 
+// The read order moved here out of prompt.md, where nothing guarded it either. It needs one
+// now: this file is edited by hand by someone who doesn't ship code, and a paragraph lifted
+// out of the middle of a preamble leaves nothing behind to notice. Matched on the two tool
+// names that appear nowhere else in the file, so rewording the sentence around them is free.
+test("the shipped laws still name the design read order", () => {
+  const laws = fs.readFileSync(path.join(__dirname, "..", "standards", "figma-laws.md"), "utf8");
+  const managed = laws.slice(laws.indexOf(LAWS_BEGIN), laws.indexOf(LAWS_END));
+
+  assert.match(managed, /get_variable_defs/, "the call that gives the token map");
+  assert.match(managed, /download_assets/, "the call that exports the icons");
+});
+
 // The bridge asserting nothing about the folder is the point of the change: it measured that
 // while resolving the target, and the agent read the claim after the deeplink opened. Matching
 // the deleted sentences rather than any mention of a folder, so a comment can still explain
